@@ -388,6 +388,8 @@ pub const MONITOR_FILE: &str = "monitor.json";
 const READY_ATTEMPTS: u32 = 100;
 const READY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 const CLOCK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+/// How often the loop asks the scorer for the done marker, every ask being a `docker exec`.
+const DONE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// The prompt a harness is started on.
 const TASK_PROMPT: &str = "Read README.md in your workspace and work on the task it lays out.";
@@ -2235,6 +2237,7 @@ fn await_sandbox(
     let entered = std::time::Instant::now();
     let deadline = entered + std::time::Duration::from_secs(phase.limit);
     let mut next_status = entered + STATUS_INTERVAL;
+    let mut next_done = entered + DONE_INTERVAL;
     let mut warned_silence = std::time::Duration::ZERO;
     let mut warned_looping = false;
     let mut out_of_time = false;
@@ -2257,7 +2260,7 @@ fn await_sandbox(
                 phase.turn
             );
             return Ok(Ending::TurnOver(status.code().unwrap_or(1)));
-        } else if sandbox.scored && exists(&["exec", &scorer, "test", "-f", DONE_MARKER])? {
+        } else if sandbox.scored && reported_done(&scorer, &mut next_done)? {
             log::info!("{name}: the agent reported itself done, stopping {container}");
         } else if std::time::Instant::now() >= deadline {
             log::warn!(
@@ -2440,6 +2443,17 @@ fn read_only_mount(source: &str, target: &str) -> std::io::Result<String> {
     }
 
     Ok(format!("{}:{target}{READ_ONLY}", source.display()))
+}
+
+/// Whether the agent left the done marker, asked of `scorer` once `next_done` is due.
+fn reported_done(scorer: &str, next_done: &mut std::time::Instant) -> std::io::Result<bool> {
+    if std::time::Instant::now() < *next_done {
+        return Ok(false);
+    }
+    let done = exists(&["exec", scorer, "test", "-f", DONE_MARKER])?;
+    *next_done = std::time::Instant::now() + DONE_INTERVAL;
+
+    Ok(done)
 }
 
 fn exists(arguments: &[&str]) -> std::io::Result<bool> {
