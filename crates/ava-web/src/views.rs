@@ -1,6 +1,7 @@
 //! The pages of the web interface, rendered from the run and tournament
 //! records on disk, the registry and the games folder.
 
+use crate::chart;
 use ava_game::scoring::Scoring;
 use ava_run::{docker, process, registry, runs, tournament, usage};
 
@@ -444,6 +445,16 @@ const GRAPH_PLANNED_DASH: &str = "4 4";
 const GRAPH_PLANNED_STATE: &str = "pending";
 /// The turn the attacks of a record from before the turns count as.
 const LEGACY_ATTACK_TURN: usize = 1;
+
+/// The avatar beside a series in the legend of a chart.
+const CHART_AVATAR_CLASSES: &str = "h-4 w-4 rounded-sm";
+/// The heading of a chart in a card of its own under the card of a round.
+const CHART_HEADING_CLASSES: &str = "text-xs font-medium text-neutral-400 mb-2";
+const ROUND_CHART_CLASSES: &str = "p-4 mt-3";
+/// The score and points charts side by side.
+const CHARTS_GRID_CLASSES: &str = "grid grid-cols-2 gap-4 items-start";
+const NO_SCORE_YET: &str = "no pairing between different agents yet";
+const NO_POINTS_YET: &str = "no ranked entry yet";
 
 /// The cover of a card shows the entry of record as it is: the first bytes of
 /// a binary as a grid of cells shaded by their value, so the size and the
@@ -2453,15 +2464,27 @@ pub(crate) fn tournament_page(
         !playing && (!record.played() || game.is_some_and(|game| game.turns().len() == 1));
     let rated = record.finished_rounds().next().is_some();
     let labels: Vec<String> = record.seats.iter().map(|seat| seat.agent.label()).collect();
-    let mut labeled = Vec::new();
-    for round in record.finished_rounds() {
-        labeled.extend(label_pairings(
-            &labels,
-            &tournament::pairings(&record, round)?,
-            ava_game::scoring::Weights::default(),
-            &[],
+    // The pairings of every finished round by its number, which the score
+    // chart walks round by round and the standings pool.
+    let mut rounds_labeled: Vec<(usize, Vec<Labeled>)> = Vec::new();
+    for (index, round) in record.rounds.iter().enumerate() {
+        if round.finished_seconds.is_none() {
+            continue;
+        }
+        rounds_labeled.push((
+            index,
+            label_pairings(
+                &labels,
+                &tournament::pairings(&record, round)?,
+                ava_game::scoring::Weights::default(),
+                &[],
+            ),
         ));
     }
+    let labeled: Vec<Labeled> = rounds_labeled
+        .iter()
+        .flat_map(|(_, pairings)| pairings.iter().cloned())
+        .collect();
     let standings = standings(&labeled);
     let cells = pairing_cells(&record)?;
     let costs = seat_costs(&runs, name, record.seats.len(), &registry);
@@ -2566,6 +2589,40 @@ pub(crate) fn tournament_page(
         ));
     }
 
+    // The charts over the finished rounds, once there is one to draw.
+    let kept = game
+        .map(|game| kept_entries(&record, game))
+        .transpose()?
+        .unwrap_or_default();
+    // The region is there before the first round finishes, so the refresh
+    // fills it the moment one does.
+    body.push_str("<div data-refresh=\"charts\">");
+    if rated {
+        // The score chart takes the row when the game ranks nothing.
+        let points = points_chart(&record, &registry, &kept);
+        if points.is_empty() {
+            body.push_str(&score_chart(
+                &record,
+                &registry,
+                &labels,
+                &rounds_labeled,
+                chart::WIDE_WIDTH,
+            ));
+        } else {
+            body.push_str(&format!(
+                "<div class=\"{CHARTS_GRID_CLASSES}\">{}{points}</div>",
+                score_chart(
+                    &record,
+                    &registry,
+                    &labels,
+                    &rounds_labeled,
+                    chart::NARROW_WIDTH
+                )
+            ));
+        }
+    }
+    body.push_str("</div>");
+
     body.push_str("<div data-refresh=\"rounds\">");
 
     // The rounds, newest first.
@@ -2598,8 +2655,11 @@ pub(crate) fn tournament_page(
             let spent = round_seconds(&runs, name, index, turns, record.limit_seconds);
             (spent.min(budget) * 100).checked_div(budget).unwrap_or(0)
         });
-        body.push_str(&round_graph(
-            &record, round, game, &registry, &running, live, progress,
+        body.push_str(&format!(
+            "<div class=\"{CARD_CLASSES} relative\">{}{}</div>{}",
+            round_edge(progress),
+            round_graph(&record, round, game, &registry, &running, live),
+            banked_chart(&record, &registry, &kept, index)
         ));
     }
 
@@ -2661,7 +2721,8 @@ fn tournament_card(record: &ava_wire::Tournament, walking: bool) -> String {
 /// edge from every entry a run got as its input to that run. Every seat and
 /// turn not reached yet is drawn faded, with the edges the game will ask for
 /// dashed, so the whole round shows and the part played stands out. While
-/// the round is `live`, a run named but not started shows as queued.
+/// the round is `live`, a run named but not started shows as queued. The
+/// graph fills the card of its round.
 fn round_graph(
     record: &ava_wire::Tournament,
     round: &ava_wire::Round,
@@ -2669,7 +2730,6 @@ fn round_graph(
     registry: &registry::Registry,
     running: &[String],
     live: bool,
-    progress: Option<u64>,
 ) -> String {
     /// An edge the game will ask for once a turn starts, by seat and turn.
     struct Planned {
@@ -2970,10 +3030,7 @@ fn round_graph(
     }
 
     svg.push_str("</svg>");
-    format!(
-        "<div class=\"{CARD_CLASSES} relative\">{}<div class=\"p-4 overflow-x-auto\">{svg}</div></div>",
-        round_edge(progress)
-    )
+    format!("<div class=\"p-4 overflow-x-auto\">{svg}</div>")
 }
 
 /// The edge of the card of a round, filled to `progress` of a hundred while it
@@ -3054,6 +3111,326 @@ fn graph_hover(
     }
 
     words.join(", ")
+}
+
+/// The entries one seat kept in the last turn of one round, and the attempt
+/// among them that is its entry of record.
+struct KeptEntries {
+    round: usize,
+    /// Whether the round is over, which is when its entries of record are
+    /// picked and it counts for the standings.
+    finished: bool,
+    seat: usize,
+    /// The seconds of the entry of record, nothing when no push passed or
+    /// the round has not picked it yet.
+    attempt: Option<u64>,
+    /// Every entry the run kept, oldest first, ranked.
+    entries: Vec<runs::Entry>,
+}
+
+impl KeptEntries {
+    /// The points of the entry of record, nothing when no push passed or the
+    /// game ranks nothing.
+    fn points(&self) -> Option<u64> {
+        let attempt = self.attempt?;
+        self.entries
+            .iter()
+            .find(|entry| entry.seconds == attempt)
+            .and_then(|entry| entry.points)
+    }
+}
+
+/// What every seat kept in the last turn of every round of `record`, read
+/// once for the charts of the tournament. In a round still playing only the
+/// runs that are over are read, since a run keeps its entries in its scoring
+/// container until it ends.
+fn kept_entries(
+    record: &ava_wire::Tournament,
+    game: &dyn ava_game::Game,
+) -> std::io::Result<Vec<KeptEntries>> {
+    let last = game.turns().len() - 1;
+    let file = runs::turn_entry(game, last);
+    let mut kept = Vec::new();
+
+    for (index, round) in record.rounds.iter().enumerate() {
+        let finished = round.finished_seconds.is_some();
+        for entry in round.entries.iter().filter(|entry| entry.turn == last) {
+            let directory = std::path::Path::new(docker::RUN_DIRECTORY).join(&entry.run);
+            if !finished && !runs::read(&directory).is_ok_and(|run| run.finished_seconds.is_some())
+            {
+                continue;
+            }
+            kept.push(KeptEntries {
+                round: index,
+                finished,
+                seat: entry.seat,
+                attempt: entry.attempt,
+                entries: runs::entries(game, &directory, file)?,
+            });
+        }
+    }
+
+    Ok(kept)
+}
+
+/// The line of a seat on a chart, without its points yet: labelled by the
+/// name the agent goes by, else the harness on the model, behind the number
+/// of the `seat` when the line is one seat's rather than the agent's, in the
+/// hue and with the avatar of the agent, and hovering to the agent with the
+/// settings it plays under.
+fn seat_series(
+    registry: &registry::Registry,
+    setup: &ava_wire::Setup,
+    seat: Option<usize>,
+) -> chart::Series {
+    let name = recorded_name(registry, &setup.agent, setup.name.as_deref());
+    let identity = name.clone().unwrap_or_else(|| setup.agent.label());
+    let label = match seat {
+        Some(seat) => format!("{} {identity}", seat + 1),
+        None => identity,
+    };
+    let hover = if name.is_some() {
+        format!("{label}, {}", setup.label())
+    } else {
+        setup.label()
+    };
+    let (hue, _) = avatar_grid(&setup.agent);
+
+    chart::Series {
+        label,
+        hover,
+        hue,
+        face: avatar(&setup.agent, CHART_AVATAR_CLASSES),
+        points: Vec::new(),
+    }
+}
+
+/// A chart under its title, the title explained behind a hover, as one block
+/// so two of them share a row.
+fn chart_panel(title: &str, tooltip: &str, chart: &str) -> String {
+    format!(
+        "<div class=\"min-w-0\"><p class=\"{TITLE_CLASSES}\">{}</p><div class=\"{CARD_CLASSES} p-4\">{chart}</div></div>",
+        explained(title, tooltip)
+    )
+}
+
+/// The score of every agent climbing over the finished rounds: the rounds it
+/// won and half the rounds it drew against other agents, summed round by
+/// round and held until the next round moves it, which is the line a
+/// scoreboard draws while a competition runs. Drawn `width` wide.
+fn score_chart(
+    record: &ava_wire::Tournament,
+    registry: &registry::Registry,
+    labels: &[String],
+    rounds_labeled: &[(usize, Vec<Labeled>)],
+    width: f64,
+) -> String {
+    let mut series: Vec<(String, chart::Series, ava_wire::Tally)> = Vec::new();
+    for (seat, setup) in record.seats.iter().enumerate() {
+        if series.iter().any(|(label, _, _)| *label == labels[seat]) {
+            continue;
+        }
+        series.push((
+            labels[seat].clone(),
+            seat_series(registry, setup, None),
+            ava_wire::Tally::default(),
+        ));
+    }
+
+    let mut top = 0.0f64;
+    for (index, pairings) in rounds_labeled {
+        for (agent, series, rounds) in &mut series {
+            for pairing in pairings
+                .iter()
+                .filter(|pairing| pairing.first != pairing.second)
+            {
+                let view = if pairing.first == *agent {
+                    pairing.tally
+                } else if pairing.second == *agent {
+                    mirrored(&pairing.tally)
+                } else {
+                    continue;
+                };
+                rounds.won += view.won;
+                rounds.drawn += view.drawn;
+                rounds.lost += view.lost;
+            }
+            let score = rounds.won as f64 + rounds.drawn as f64 / 2.0;
+            top = top.max(score);
+            series.points.push(chart::Point {
+                x: (index + 1) as f64,
+                y: score,
+                hover: format!(
+                    "{}, round {}, score {}, rounds {}",
+                    series.label,
+                    index + 1,
+                    score_label(score),
+                    tally_label(rounds)
+                ),
+            });
+        }
+    }
+
+    let series: Vec<chart::Series> = series.into_iter().map(|(_, series, _)| series).collect();
+    chart_panel(
+        "score",
+        "the rounds every agent won and half the rounds it drew against other agents, summed over the finished rounds",
+        &chart::lines(
+            &series,
+            &chart::Axis::counted(1, record.rounds.len() as u64),
+            &chart::Axis::values(top),
+            true,
+            width,
+            NO_SCORE_YET,
+        ),
+    )
+}
+
+/// A cumulative score, whole or with its half.
+fn score_label(score: f64) -> String {
+    if score.fract() == 0.0 {
+        format!("{score:.0}")
+    } else {
+        format!("{score:.1}")
+    }
+}
+
+/// The points of the entry of record of every seat over the finished rounds,
+/// a seat that kept none in a round it played at nothing, or no chart for a
+/// game ranking nothing.
+fn points_chart(
+    record: &ava_wire::Tournament,
+    registry: &registry::Registry,
+    kept: &[KeptEntries],
+) -> String {
+    if !kept
+        .iter()
+        .any(|kept| kept.finished && kept.points().is_some())
+    {
+        return String::new();
+    }
+
+    let mut top = 0u64;
+    let series: Vec<chart::Series> = record
+        .seats
+        .iter()
+        .enumerate()
+        .map(|(seat, setup)| {
+            let mut series = seat_series(registry, setup, Some(seat));
+            let label = &series.label;
+            series.points = kept
+                .iter()
+                .filter(|kept| kept.finished && kept.seat == seat)
+                .map(|kept| {
+                    let points = kept.points().unwrap_or(0);
+                    top = top.max(points);
+                    chart::Point {
+                        x: (kept.round + 1) as f64,
+                        y: points as f64,
+                        hover: match kept.points() {
+                            Some(points) => {
+                                format!("{label}, round {}, {points} points", kept.round + 1)
+                            }
+                            None => format!("{label}, round {}, no entry", kept.round + 1),
+                        },
+                    }
+                })
+                .collect();
+
+            series
+        })
+        .collect();
+
+    chart_panel(
+        "points",
+        "the points of the entry of record every seat kept in the finished rounds, at nothing in a round it kept none",
+        &chart::lines(
+            &series,
+            &chart::Axis::counted(1, record.rounds.len() as u64),
+            &chart::Axis::values(top as f64),
+            false,
+            chart::NARROW_WIDTH,
+            NO_POINTS_YET,
+        ),
+    )
+}
+
+/// The points every seat had banked over the seconds of its run in the round
+/// at `index`: a step up at every push that raised its best, from the start
+/// of the scoring clock, on the scale of the whole tournament so the rounds
+/// compare. A round still playing shows the seats whose runs are over, so
+/// the chart fills in as they end. Nothing for a round without a ranked
+/// entry yet.
+fn banked_chart(
+    record: &ava_wire::Tournament,
+    registry: &registry::Registry,
+    kept: &[KeptEntries],
+    index: usize,
+) -> String {
+    let in_round: Vec<&KeptEntries> = kept.iter().filter(|kept| kept.round == index).collect();
+    if !in_round
+        .iter()
+        .any(|kept| kept.entries.iter().any(|entry| entry.points.is_some()))
+    {
+        return String::new();
+    }
+
+    let ceiling = kept
+        .iter()
+        .flat_map(|kept| kept.entries.iter().filter_map(|entry| entry.points))
+        .max()
+        .unwrap_or_default();
+    let mut latest = record.limit_seconds;
+    let series: Vec<chart::Series> = in_round
+        .iter()
+        .filter_map(|kept| {
+            let setup = record.seats.get(kept.seat)?;
+            let mut series = seat_series(registry, setup, Some(kept.seat));
+            let label = &series.label;
+            let mut best = 0u64;
+            let mut points = vec![chart::Point {
+                x: 0.0,
+                y: 0.0,
+                hover: String::new(),
+            }];
+            // Only a push that raised the best moves the line, so only those
+            // are marked: an agent tuning by push leaves hundreds of others.
+            for entry in &kept.entries {
+                let Some(ranked) = entry.points else {
+                    continue;
+                };
+                latest = latest.max(entry.seconds);
+                if ranked <= best {
+                    continue;
+                }
+                best = ranked;
+                points.push(chart::Point {
+                    x: entry.seconds as f64,
+                    y: best as f64,
+                    hover: format!("{label}, {ranked} points at {}s", entry.seconds),
+                });
+            }
+            series.points = points;
+
+            Some(series)
+        })
+        .collect();
+
+    format!(
+        "<div class=\"{CARD_CLASSES} {ROUND_CHART_CLASSES}\"><p class=\"{CHART_HEADING_CLASSES}\">{}</p>{}</div>",
+        explained(
+            "banked",
+            "the best points every seat had banked over the seconds of its run, every push that raised it a step, on the scale of the tournament; a round still playing shows the seats whose runs are over"
+        ),
+        chart::lines(
+            &series,
+            &chart::Axis::seconds(latest),
+            &chart::Axis::values(ceiling as f64),
+            true,
+            chart::WIDE_WIDTH,
+            NO_POINTS_YET,
+        )
+    )
 }
 
 /// The dollars every seat of the named tournament spent, with the runs they
@@ -3143,6 +3520,7 @@ impl Standing {
 }
 
 /// One pairing between the agents its seats hold, by their labels.
+#[derive(Clone)]
 struct Labeled {
     first: String,
     second: String,
@@ -3932,8 +4310,9 @@ fn avatar(agent: &ava_wire::Agent, classes: &str) -> String {
     format!(
         "<svg class=\"{classes}\" viewBox=\"0 0 {AVATAR_SIDE} {AVATAR_SIDE}\" shape-rendering=\"crispEdges\" role=\"img\" aria-label=\"{}\">\
          <rect width=\"{AVATAR_SIDE}\" height=\"{AVATAR_SIDE}\" class=\"{AVATAR_GROUND_CLASSES}\"/>\
-         <g fill=\"hsl({hue} 60% 55%)\">{cells}</g></svg>",
-        escape(&agent.label())
+         <g fill=\"{}\">{cells}</g></svg>",
+        escape(&agent.label()),
+        chart::color(hue)
     )
 }
 
@@ -3968,7 +4347,8 @@ fn graph_avatar(agent: &ava_wire::Agent, x: f64, y: f64) -> String {
     format!(
         "<g transform=\"translate({x} {y})\"><g class=\"{GRAPH_AVATAR_CLASSES}\" shape-rendering=\"crispEdges\">\
          <rect width=\"{GRAPH_AVATAR_SIDE}\" height=\"{GRAPH_AVATAR_SIDE}\" class=\"{AVATAR_GROUND_CLASSES}\"/>\
-         <g transform=\"scale({scale})\" fill=\"hsl({hue} 60% 55%)\">{cells}</g></g></g>"
+         <g transform=\"scale({scale})\" fill=\"{}\">{cells}</g></g></g>",
+        chart::color(hue)
     )
 }
 
