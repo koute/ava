@@ -138,6 +138,15 @@ function retired() {
     return address.pathname + address.search;
 }
 
+/* The boxes of `region` by their name and value, whether each is checked. */
+function checks(region) {
+    const state = new Map();
+    for (const box of region.querySelectorAll("input[type=checkbox]")) {
+        state.set(`${box.name}=${box.value}`, box.checked);
+    }
+    return state;
+}
+
 /* The open state of every named fold in `region`, by its name. */
 function folds(region) {
     const state = new Map();
@@ -166,10 +175,17 @@ async function refresh() {
             continue;
         }
         const state = folds(region);
+        const checked = checks(region);
         region.replaceChildren(...update.childNodes);
         for (const fold of region.querySelectorAll("details[data-fold]")) {
             if (state.has(fold.dataset.fold)) {
                 fold.open = state.get(fold.dataset.fold);
+            }
+        }
+        for (const box of region.querySelectorAll("input[type=checkbox]")) {
+            const key = `${box.name}=${box.value}`;
+            if (checked.has(key)) {
+                box.checked = checked.get(key);
             }
         }
     }

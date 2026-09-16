@@ -9,7 +9,7 @@ use std::io::Read;
 
 use ava_run::{docker, process, registry, tournament};
 
-use crate::views;
+use crate::{report, views};
 
 /// The address `serve` binds unless the command names another one.
 pub const DEFAULT_ADDRESS: &str = "0.0.0.0";
@@ -37,10 +37,10 @@ impl Default for Serve {
     }
 }
 
-const TAILWIND: &str = include_str!("../assets/tailwind.js");
+pub(crate) const TAILWIND: &str = include_str!("../assets/tailwind.js");
 
 /// The vendored interface fonts, served by file name.
-const FONTS: [(&str, &[u8]); 4] = [
+pub(crate) const FONTS: [(&str, &[u8]); 4] = [
     (
         "geist-mono-latin-400-normal.woff2",
         include_bytes!("../assets/fonts/geist-mono-latin-400-normal.woff2"),
@@ -76,6 +76,10 @@ pub(crate) const SPRITES: [(&str, &[u8]); 4] = [
 pub(crate) const SPRITE_PATH: &str = "/assets/sprites/";
 
 const HTML_CONTENT_TYPE: &str = "text/html; charset=utf-8";
+/// The field naming a tournament of a report, once per tournament chosen.
+pub(crate) const TOURNAMENT_FIELD: &str = "tournament";
+/// The field asking for the report as a file to save rather than a page to read.
+pub(crate) const DOWNLOAD_FIELD: &str = "download";
 const TEXT_CONTENT_TYPE: &str = "text/plain; charset=utf-8";
 const BINARY_CONTENT_TYPE: &str = "application/octet-stream";
 const JAVASCRIPT_CONTENT_TYPE: &str = "text/javascript";
@@ -280,8 +284,18 @@ fn view(segments: &[&str], query: Option<&str>) -> Answer {
         .map(|(_, start)| start.clone())
         .collect();
 
+    // A report asked for as a file is served as an attachment under its name.
+    let mut attachment = None;
     let outcome = match segments {
         [""] => views::runs_page(&notice, &selection, &pending),
+        ["report"] => {
+            let names = query_values(query, TOURNAMENT_FIELD);
+            let download = query_value(query, DOWNLOAD_FIELD).is_some();
+            if download {
+                attachment = Some(report::file_name(&names));
+            }
+            report::page(&names, download)
+        }
         ["scoreboard"] => views::scoreboard_page(&selection),
         ["agents"] => views::agents_page(&notice, &selection),
         ["agent", name] => views::agent_page(&urldecode(name), &notice, &selection),
@@ -341,7 +355,10 @@ fn view(segments: &[&str], query: Option<&str>) -> Answer {
     };
 
     match outcome {
-        Ok(page) => html_response(200, &page),
+        Ok(page) => match attachment {
+            Some(name) => html_response(200, &page).with_header(attachment_header(&name)),
+            None => html_response(200, &page),
+        },
         Err(error) => {
             log::error!("/{}: {error}", segments.join("/"));
             html_response(500, &views::error_page(&error.to_string()))
@@ -939,7 +956,7 @@ fn form(request: &mut tiny_http::Request) -> Vec<(String, String)> {
 }
 
 /// Encode `text` for one urlencoded form or query token.
-fn urlencode(text: &str) -> String {
+pub(crate) fn urlencode(text: &str) -> String {
     let mut encoded = String::with_capacity(text.len());
 
     for byte in text.bytes() {
@@ -962,6 +979,18 @@ fn query_value(query: Option<&str>, key: &str) -> Option<String> {
         .filter_map(|pair| pair.split_once('='))
         .find(|(name, _)| *name == key)
         .map(|(_, value)| urldecode(value))
+}
+
+/// Every value of `key` in the query, in order, for a field a form submits
+/// once per box checked.
+fn query_values(query: Option<&str>, key: &str) -> Vec<String> {
+    query
+        .unwrap_or_default()
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .filter(|(name, _)| *name == key)
+        .map(|(_, value)| urldecode(value))
+        .collect()
 }
 
 /// The first value submitted under `key`, or the empty string.
@@ -1013,6 +1042,15 @@ fn redirect(location: &str) -> Answer {
         .with_header(
             tiny_http::Header::from_bytes("Location", location).expect("a plain path parses"),
         )
+}
+
+/// The header having the browser save the answer as the file `name`.
+fn attachment_header(name: &str) -> tiny_http::Header {
+    tiny_http::Header::from_bytes(
+        "Content-Disposition",
+        format!("attachment; filename=\"{name}\""),
+    )
+    .expect("a file name of a tournament report parses")
 }
 
 fn content_type(value: &str) -> tiny_http::Header {

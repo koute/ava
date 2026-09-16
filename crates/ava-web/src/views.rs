@@ -21,7 +21,7 @@ const DEFAULT_ANALYST_THINKING: &str = "medium";
 const AVATAR_SIDE: u64 = 5;
 const AVATAR_COLUMNS: u64 = 3;
 const AVATAR_HUES: u64 = 360;
-const AVATAR_CLASSES: &str = "h-6 w-6 rounded";
+pub(crate) const AVATAR_CLASSES: &str = "h-6 w-6 rounded";
 
 /// The avatar on the agent tile of a run, the height of the line beside it.
 const AGENT_TILE_AVATAR_CLASSES: &str = "h-5 w-5 shrink-0 rounded";
@@ -55,9 +55,9 @@ const ROUND_LOG_SUFFIX: &str = ".log";
 /// How much of the agent console the run page shows inline.
 const CONSOLE_TAIL_BYTES: usize = 16 * 1024;
 
-const LAYOUT_TEMPLATE: &str = include_str!("../assets/web-layout.html");
+pub(crate) const LAYOUT_TEMPLATE: &str = include_str!("../assets/web-layout.html");
 const TRAIL_PLACEHOLDER: &str = "__AVA_TRAIL__";
-const TITLE_PLACEHOLDER: &str = "__AVA_TITLE__";
+pub(crate) const TITLE_PLACEHOLDER: &str = "__AVA_TITLE__";
 const SECTION_PLACEHOLDER: &str = "__AVA_SECTION__";
 const BODY_PLACEHOLDER: &str = "__AVA_BODY__";
 
@@ -105,6 +105,9 @@ const NO_RUN_YET: &str = "-";
 const PENDING_STATE: &str = "pending";
 const NO_LIMITS_NOTE: &str = "no backend reported its limits";
 const NO_TOURNAMENTS_NOTE: &str = "no tournaments yet, open one above";
+const REPORT_CHECKBOX_CLASSES: &str = "h-4 w-4 rounded accent-indigo-500 align-middle";
+const REPORT_TOOLTIP: &str = "a document of how the agents did in the checked tournaments against \
+     the tokens and the seconds they spent, standing on its own once saved";
 const NO_SEATS_NOTE: &str = "no seats yet, seat an agent below";
 
 /// The names the script keeps the sort of a table under.
@@ -211,7 +214,7 @@ const IMAGE_PREFIX: &str = "ava/";
 
 /// A card holds one table or one form, so every block on a page shares the
 /// same edges and corners.
-const CARD_CLASSES: &str = "rounded-lg border border-neutral-800 bg-neutral-900";
+pub(crate) const CARD_CLASSES: &str = "rounded-lg border border-neutral-800 bg-neutral-900";
 
 /// Every table spans its card. The columns pack on one gutter, shrunk to
 /// their content, and one of them takes the slack, so the columns before it
@@ -248,17 +251,18 @@ const CENTERED_CLASSES: &str = "text-center";
 const EMPTY_ROW_CLASSES: &str =
     "px-4 py-8 text-center text-neutral-500 border-t border-neutral-800";
 
-const TITLE_CLASSES: &str = "text-sm font-semibold text-neutral-100 mt-8 mb-3";
+pub(crate) const TITLE_CLASSES: &str = "text-sm font-semibold text-neutral-100 mt-8 mb-3";
 
 /// The first title of a page rests on the padding of the layout.
-const FIRST_TITLE_CLASSES: &str = "text-sm font-semibold text-neutral-100 mb-3";
-const NOTE_CLASSES: &str = "text-neutral-400";
+pub(crate) const FIRST_TITLE_CLASSES: &str = "text-sm font-semibold text-neutral-100 mb-3";
+pub(crate) const NOTE_CLASSES: &str = "text-neutral-400";
 /// The side bearing of the last glyph, so the note lands on the hairline the
 /// cards of the page end on rather than a few pixels inside it.
 const TRAIL_OPTICAL_NUDGE: &str = "-mr-[0.07em]";
-const MUTED_CLASSES: &str = "text-neutral-500";
-const MONO_CLASSES: &str = "font-mono";
-const LINK_CLASSES: &str = "font-mono text-indigo-300 hover:text-indigo-200 transition-colors";
+pub(crate) const MUTED_CLASSES: &str = "text-neutral-500";
+pub(crate) const MONO_CLASSES: &str = "font-mono";
+pub(crate) const LINK_CLASSES: &str =
+    "font-mono text-indigo-300 hover:text-indigo-200 transition-colors";
 const CONSOLE_CLASSES: &str = "rounded-lg border border-neutral-800 bg-neutral-950 p-4 text-xs \
      font-mono text-neutral-300 whitespace-pre overflow-x-auto";
 
@@ -291,8 +295,8 @@ const SUMMARY_CLASSES: &str = "cursor-pointer list-none [&::-webkit-details-mark
 
 /// One height for every form control, so a row of them shares a baseline. It
 /// fits the two lines of the agent picker.
-const CONTROL_HEIGHT: &str = "h-11";
-const BUTTON_CLASSES: &str =
+pub(crate) const CONTROL_HEIGHT: &str = "h-11";
+pub(crate) const BUTTON_CLASSES: &str =
     "rounded-md bg-indigo-500 hover:bg-indigo-400 px-4 font-medium text-white transition-colors";
 const STOP_CLASSES: &str = "rounded-md border border-red-500/40 text-red-400 hover:bg-red-500/10 \
      px-2.5 py-1 text-xs font-medium transition-colors";
@@ -370,7 +374,7 @@ const CONTEXT_FILL: &str = "bg-sky-500";
 /// The tiles summarizing a run, one figure each.
 const TILE_CLASSES: &str = "rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3";
 const TILE_LABEL_CLASSES: &str = "text-xs font-medium text-neutral-500";
-const TILE_VALUE_CLASSES: &str =
+pub(crate) const TILE_VALUE_CLASSES: &str =
     "mt-1 text-lg font-semibold text-neutral-100 font-mono tabular-nums";
 const TILE_TEXT_CLASSES: &str = "mt-1 text-sm font-semibold text-neutral-100 font-mono break-all";
 const TILE_DETAIL_CLASSES: &str = "mt-1 text-xs text-neutral-500 break-all";
@@ -447,12 +451,12 @@ const GRAPH_PLANNED_STATE: &str = "pending";
 const LEGACY_ATTACK_TURN: usize = 1;
 
 /// The avatar beside a series in the legend of a chart.
-const CHART_AVATAR_CLASSES: &str = "h-4 w-4 rounded-sm";
+pub(crate) const CHART_AVATAR_CLASSES: &str = "h-4 w-4 rounded-sm";
 /// The heading of a chart in a card of its own under the card of a round.
 const CHART_HEADING_CLASSES: &str = "text-xs font-medium text-neutral-400 mb-2";
 const ROUND_CHART_CLASSES: &str = "p-4 mt-3";
 /// The score and points charts side by side.
-const CHARTS_GRID_CLASSES: &str = "grid grid-cols-2 gap-4 items-start";
+pub(crate) const CHARTS_GRID_CLASSES: &str = "grid grid-cols-2 gap-4 items-start";
 const NO_SCORE_YET: &str = "no pairing between different agents yet";
 const NO_POINTS_YET: &str = "no ranked entry yet";
 
@@ -2228,6 +2232,11 @@ pub(crate) fn tournaments_page(notice: &Notice, selection: &Selection) -> std::i
         .iter()
         .map(|record| {
             vec![
+                format!(
+                    "<input type=\"checkbox\" name=\"{}\" value=\"{}\" class=\"{REPORT_CHECKBOX_CLASSES}\">",
+                    crate::serve::TOURNAMENT_FIELD,
+                    escape(&record.name)
+                ),
                 logo_cell(&record.game),
                 format!(
                     "<a class=\"{LINK_CLASSES}\" href=\"/tournament/{name}\">{name}</a><div class=\"text-xs {MUTED_CLASSES} mt-0.5\">opened {} ago</div>",
@@ -2246,15 +2255,20 @@ pub(crate) fn tournaments_page(notice: &Notice, selection: &Selection) -> std::i
 
     body.push_str("<div data-refresh=\"tournaments\">");
     body.push_str(&notice.render());
+    // The boxes pick the tournaments of a report, and the script keeps them
+    // checked across a refresh.
     body.push_str(&format!(
-        "<p class=\"{TITLE_CLASSES}\">tournaments</p>{}",
+        "<p class=\"{TITLE_CLASSES}\">tournaments</p>\
+         <form method=\"get\" action=\"/report\">{}\
+         <div class=\"flex justify-end mt-3\"><button class=\"{BUTTON_CLASSES} {CONTROL_HEIGHT}\" title=\"{}\">report</button></div></form>",
         table(
             &[
-                "", "name", "state", "game", "#seats", "#rounds", "*seconds", "#combats"
+                "^", "", "name", "state", "game", "#seats", "#rounds", "*seconds", "#combats"
             ],
             rows,
             Some(NO_TOURNAMENTS_NOTE),
-        )
+        ),
+        escape(REPORT_TOOLTIP)
     ));
     body.push_str("</div>");
 
@@ -2464,23 +2478,7 @@ pub(crate) fn tournament_page(
         !playing && (!record.played() || game.is_some_and(|game| game.turns().len() == 1));
     let rated = record.finished_rounds().next().is_some();
     let labels: Vec<String> = record.seats.iter().map(|seat| seat.agent.label()).collect();
-    // The pairings of every finished round by its number, which the score
-    // chart walks round by round and the standings pool.
-    let mut rounds_labeled: Vec<(usize, Vec<Labeled>)> = Vec::new();
-    for (index, round) in record.rounds.iter().enumerate() {
-        if round.finished_seconds.is_none() {
-            continue;
-        }
-        rounds_labeled.push((
-            index,
-            label_pairings(
-                &labels,
-                &tournament::pairings(&record, round)?,
-                ava_game::scoring::Weights::default(),
-                &[],
-            ),
-        ));
-    }
+    let rounds_labeled = rounds_labeled(&record, &labels)?;
     let labeled: Vec<Labeled> = rounds_labeled
         .iter()
         .flat_map(|(_, pairings)| pairings.iter().cloned())
@@ -3115,12 +3113,12 @@ fn graph_hover(
 
 /// The entries one seat kept in the last turn of one round, and the attempt
 /// among them that is its entry of record.
-struct KeptEntries {
-    round: usize,
+pub(crate) struct KeptEntries {
+    pub(crate) round: usize,
     /// Whether the round is over, which is when its entries of record are
     /// picked and it counts for the standings.
-    finished: bool,
-    seat: usize,
+    pub(crate) finished: bool,
+    pub(crate) seat: usize,
     /// The seconds of the entry of record, nothing when no push passed or
     /// the round has not picked it yet.
     attempt: Option<u64>,
@@ -3131,7 +3129,7 @@ struct KeptEntries {
 impl KeptEntries {
     /// The points of the entry of record, nothing when no push passed or the
     /// game ranks nothing.
-    fn points(&self) -> Option<u64> {
+    pub(crate) fn points(&self) -> Option<u64> {
         let attempt = self.attempt?;
         self.entries
             .iter()
@@ -3144,7 +3142,7 @@ impl KeptEntries {
 /// once for the charts of the tournament. In a round still playing only the
 /// runs that are over are read, since a run keeps its entries in its scoring
 /// container until it ends.
-fn kept_entries(
+pub(crate) fn kept_entries(
     record: &ava_wire::Tournament,
     game: &dyn ava_game::Game,
 ) -> std::io::Result<Vec<KeptEntries>> {
@@ -3207,7 +3205,7 @@ fn seat_series(
 
 /// A chart under its title, the title explained behind a hover, as one block
 /// so two of them share a row.
-fn chart_panel(title: &str, tooltip: &str, chart: &str) -> String {
+pub(crate) fn chart_panel(title: &str, tooltip: &str, chart: &str) -> String {
     format!(
         "<div class=\"min-w-0\"><p class=\"{TITLE_CLASSES}\">{}</p><div class=\"{CARD_CLASSES} p-4\">{chart}</div></div>",
         explained(title, tooltip)
@@ -3218,7 +3216,7 @@ fn chart_panel(title: &str, tooltip: &str, chart: &str) -> String {
 /// won and half the rounds it drew against other agents, summed round by
 /// round and held until the next round moves it, which is the line a
 /// scoreboard draws while a competition runs. Drawn `width` wide.
-fn score_chart(
+pub(crate) fn score_chart(
     record: &ava_wire::Tournament,
     registry: &registry::Registry,
     labels: &[String],
@@ -3279,7 +3277,7 @@ fn score_chart(
             &series,
             &chart::Axis::counted(1, record.rounds.len() as u64),
             &chart::Axis::values(top),
-            true,
+            chart::Shape::Stepped,
             width,
             NO_SCORE_YET,
         ),
@@ -3348,7 +3346,7 @@ fn points_chart(
             &series,
             &chart::Axis::counted(1, record.rounds.len() as u64),
             &chart::Axis::values(top as f64),
-            false,
+            chart::Shape::Straight,
             chart::NARROW_WIDTH,
             NO_POINTS_YET,
         ),
@@ -3426,7 +3424,7 @@ fn banked_chart(
             &series,
             &chart::Axis::seconds(latest),
             &chart::Axis::values(ceiling as f64),
-            true,
+            chart::Shape::Stepped,
             chart::WIDE_WIDTH,
             NO_POINTS_YET,
         )
@@ -3521,7 +3519,7 @@ impl Standing {
 
 /// One pairing between the agents its seats hold, by their labels.
 #[derive(Clone)]
-struct Labeled {
+pub(crate) struct Labeled {
     first: String,
     second: String,
     /// The second it was fought at, the order Elo walks.
@@ -3560,6 +3558,32 @@ fn label_pairings(
             })
         })
         .collect()
+}
+
+/// The pairings of every finished round of `record` by its number, between
+/// the agents `labels` name, unweighed: what the score chart walks round by
+/// round and the standings pool.
+pub(crate) fn rounds_labeled(
+    record: &ava_wire::Tournament,
+    labels: &[String],
+) -> std::io::Result<Vec<(usize, Vec<Labeled>)>> {
+    let mut rounds_labeled = Vec::new();
+    for (index, round) in record.rounds.iter().enumerate() {
+        if round.finished_seconds.is_none() {
+            continue;
+        }
+        rounds_labeled.push((
+            index,
+            label_pairings(
+                labels,
+                &tournament::pairings(record, round)?,
+                ava_game::scoring::Weights::default(),
+                &[],
+            ),
+        ));
+    }
+
+    Ok(rounds_labeled)
 }
 
 /// The standings over `labeled`, every agent that met another, rated over
@@ -3649,7 +3673,7 @@ fn standings(labeled: &[Labeled]) -> Vec<Standing> {
 }
 
 /// The `tally` from the view of its second side.
-fn mirrored(tally: &ava_wire::Tally) -> ava_wire::Tally {
+pub(crate) fn mirrored(tally: &ava_wire::Tally) -> ava_wire::Tally {
     ava_wire::Tally {
         won: tally.lost,
         drawn: tally.drawn,
@@ -3658,7 +3682,7 @@ fn mirrored(tally: &ava_wire::Tally) -> ava_wire::Tally {
 }
 
 /// A tally as won-drawn-lost.
-fn tally_label(tally: &ava_wire::Tally) -> String {
+pub(crate) fn tally_label(tally: &ava_wire::Tally) -> String {
     format!("{}-{}-{}", tally.won, tally.drawn, tally.lost)
 }
 
@@ -4294,7 +4318,7 @@ fn agent_link(name: &str) -> String {
 }
 
 /// The name `agent` is registered under, else the harness on the model.
-fn agent_name(registry: &registry::Registry, agent: &ava_wire::Agent) -> String {
+pub(crate) fn agent_name(registry: &registry::Registry, agent: &ava_wire::Agent) -> String {
     registry
         .alias_of(agent)
         .map(|alias| alias.name.clone())
@@ -4304,7 +4328,7 @@ fn agent_name(registry: &registry::Registry, agent: &ava_wire::Agent) -> String 
 /// The avatar of `agent`: a grid of cells lit by the bits of the hash of its
 /// harness and model, mirrored left to right, in a hue the hash picks. The
 /// same agent has the same avatar everywhere, whatever it is named.
-fn avatar(agent: &ava_wire::Agent, classes: &str) -> String {
+pub(crate) fn avatar(agent: &ava_wire::Agent, classes: &str) -> String {
     let (hue, cells) = avatar_grid(agent);
 
     format!(
@@ -4317,7 +4341,7 @@ fn avatar(agent: &ava_wire::Agent, classes: &str) -> String {
 }
 
 /// The hue and the lit cells of the avatar of `agent`, on its own grid.
-fn avatar_grid(agent: &ava_wire::Agent) -> (u64, String) {
+pub(crate) fn avatar_grid(agent: &ava_wire::Agent) -> (u64, String) {
     let hash = fnv1a(&[agent.harness.as_bytes(), &[0], agent.model.as_bytes()].concat());
     let mut cells = String::new();
     for row in 0..AVATAR_SIDE {
@@ -5038,7 +5062,7 @@ fn run_link(name: &str) -> String {
 
 /// A tile of the run page: a label over a value, with a muted detail beneath
 /// it when there is one.
-fn tile(label: &str, value: &str, detail: &str, value_classes: &str) -> String {
+pub(crate) fn tile(label: &str, value: &str, detail: &str, value_classes: &str) -> String {
     let detail = if detail.is_empty() {
         String::new()
     } else {
@@ -5051,7 +5075,7 @@ fn tile(label: &str, value: &str, detail: &str, value_classes: &str) -> String {
 }
 
 /// A grid of tiles.
-fn tiles(tiles: &[String]) -> String {
+pub(crate) fn tiles(tiles: &[String]) -> String {
     format!(
         "<div class=\"{TILE_GRID_CLASSES}\">{}</div>",
         tiles.concat()
@@ -5085,7 +5109,7 @@ fn pill(tint: &str, pulsing: bool, label: &str) -> String {
 }
 
 /// A label with its explanation behind a tooltip, or bare without one.
-fn explained(label: &str, tooltip: &str) -> String {
+pub(crate) fn explained(label: &str, tooltip: &str) -> String {
     if tooltip.is_empty() {
         return label.to_string();
     }
@@ -5171,7 +5195,7 @@ fn meter(value: u64, ceiling: u64, fill: &str, label: &str, label_width: &str) -
 /// right-aligns numbers, `^` centers, `*` takes a share of the slack, and
 /// they combine. Without a `*` the last column takes the slack. Without rows
 /// the table shows `empty`, or nothing when there is no note to show.
-fn table(headers: &[&str], rows: Vec<Vec<String>>, empty: Option<&str>) -> String {
+pub(crate) fn table(headers: &[&str], rows: Vec<Vec<String>>, empty: Option<&str>) -> String {
     render_table(None, None, headers, rows, empty)
 }
 
@@ -5367,7 +5391,7 @@ fn page(trail: &[(&str, &str)], body: &str) -> String {
         .replace(BODY_PLACEHOLDER, body)
 }
 
-fn escape(text: &str) -> String {
+pub(crate) fn escape(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")

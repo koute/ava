@@ -33,6 +33,11 @@ const HOVERED_LINE_WIDTH: f64 = 2.5;
 /// line two pixels wide is hard to rest on.
 const HIT_WIDTH: f64 = 14.0;
 const POINT_RADIUS: f64 = 2.75;
+/// The radius of a mark standing alone, with no line to find it by.
+const MARK_RADIUS: f64 = 5.0;
+/// The ticks of a percent axis, every quarter of it.
+const PERCENT_STEP: f64 = 25.0;
+const PERCENT_MAX: f64 = 100.0;
 /// The ticks a value axis aims for, the nice step rounding it up or down.
 const VALUE_TICKS: f64 = 4.0;
 /// The most labels a horizontal axis carries before they are thinned.
@@ -65,6 +70,18 @@ const LEGEND_ITEM_CLASSES: &str =
     "flex items-center gap-1.5 whitespace-nowrap rounded px-1.5 py-0.5 -mx-1.5 cursor-default";
 const SWATCH_CLASSES: &str = "inline-block h-0.5 w-4 rounded-full";
 const EMPTY_CLASSES: &str = "text-neutral-500 text-xs";
+
+/// How the points of a series are drawn.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Shape {
+    /// A line from point to point.
+    Straight,
+    /// A line holding its value until the next point, so a value stands
+    /// until the next one is banked.
+    Stepped,
+    /// Marks alone, one per point, with no line between them.
+    Scatter,
+}
 
 /// One line of a chart.
 pub(crate) struct Series {
@@ -145,6 +162,22 @@ impl Axis {
         Self { min, max, ticks }
     }
 
+    /// An axis from nothing to the whole, a tick every quarter, labelled in percent.
+    pub(crate) fn percent() -> Self {
+        let ticks = (0..=(PERCENT_MAX / PERCENT_STEP) as u64)
+            .map(|tick| {
+                let value = tick as f64 * PERCENT_STEP;
+                (value, format!("{value}%"))
+            })
+            .collect();
+
+        Self {
+            min: 0.0,
+            max: PERCENT_MAX,
+            ticks,
+        }
+    }
+
     /// An axis of seconds from zero to `max`, ticks at a round span of
     /// minutes or hours.
     pub(crate) fn seconds(max: u64) -> Self {
@@ -213,15 +246,14 @@ pub(crate) fn color(hue: u64) -> String {
     format!("hsl({hue} {SERIES_SATURATION} {SERIES_LIGHTNESS})")
 }
 
-/// The chart of `series` over the axes, drawn `width` wide, every line
-/// stepping from point to point when `stepped`, so a value holds until the
-/// next one is banked, and a legend of the series under it. `empty` is shown
-/// in place of a chart without a point.
+/// The chart of `series` over the axes, drawn `width` wide in `shape`, and
+/// a legend of the series under it. `empty` is shown in place of a chart
+/// without a point.
 pub(crate) fn lines(
     series: &[Series],
     horizontal: &Axis,
     vertical: &Axis,
-    stepped: bool,
+    shape: Shape,
     width: f64,
     empty: &str,
 ) -> String {
@@ -275,31 +307,40 @@ pub(crate) fn lines(
             continue;
         }
         let color = color(series.hue);
-        let mut path = String::new();
-        for (index, point) in series.points.iter().enumerate() {
-            let (x, y) = (x_of(point.x), y_of(point.y));
-            if index == 0 {
-                path.push_str(&format!("M{x:.1} {y:.1}"));
-            } else if stepped {
-                path.push_str(&format!(" H{x:.1} V{y:.1}"));
-            } else {
-                path.push_str(&format!(" L{x:.1} {y:.1}"));
-            }
-        }
+        svg.push_str(&format!(
+            "<g class=\"{SERIES_CLASS} {SERIES_CLASS}-{index}\">"
+        ));
         // The line, the wide invisible stroke over it that names the series
         // wherever the cursor rests on the line, and the marks on top with
         // hovers of their own. The rules below light the group and its legend
-        // entry together.
-        svg.push_str(&format!(
-            "<g class=\"{SERIES_CLASS} {SERIES_CLASS}-{index}\">\
-             <path d=\"{path}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"{LINE_WIDTH}\" stroke-linejoin=\"round\" stroke-linecap=\"round\" class=\"{STROKE_CLASS}\"/>\
-             <path d=\"{path}\" fill=\"none\" stroke=\"transparent\" stroke-width=\"{HIT_WIDTH}\" stroke-linejoin=\"round\" stroke-linecap=\"round\" pointer-events=\"stroke\"><title>{}</title></path>",
-            escape(&series.hover)
-        ));
+        // entry together. A scatter has no line, its marks stand alone.
+        if shape != Shape::Scatter {
+            let mut path = String::new();
+            for (index, point) in series.points.iter().enumerate() {
+                let (x, y) = (x_of(point.x), y_of(point.y));
+                if index == 0 {
+                    path.push_str(&format!("M{x:.1} {y:.1}"));
+                } else if shape == Shape::Stepped {
+                    path.push_str(&format!(" H{x:.1} V{y:.1}"));
+                } else {
+                    path.push_str(&format!(" L{x:.1} {y:.1}"));
+                }
+            }
+            svg.push_str(&format!(
+                "<path d=\"{path}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"{LINE_WIDTH}\" stroke-linejoin=\"round\" stroke-linecap=\"round\" class=\"{STROKE_CLASS}\"/>\
+                 <path d=\"{path}\" fill=\"none\" stroke=\"transparent\" stroke-width=\"{HIT_WIDTH}\" stroke-linejoin=\"round\" stroke-linecap=\"round\" pointer-events=\"stroke\"><title>{}</title></path>",
+                escape(&series.hover)
+            ));
+        }
+        let radius = if shape == Shape::Scatter {
+            MARK_RADIUS
+        } else {
+            POINT_RADIUS
+        };
         // A point without a hover is a bend of the line, not a mark on it.
         for point in series.points.iter().filter(|point| !point.hover.is_empty()) {
             svg.push_str(&format!(
-                "<circle cx=\"{:.1}\" cy=\"{:.1}\" r=\"{POINT_RADIUS}\" fill=\"{color}\" class=\"{POINT_STROKE_CLASSES}\" stroke-width=\"1.5\"><title>{}</title></circle>",
+                "<circle cx=\"{:.1}\" cy=\"{:.1}\" r=\"{radius}\" fill=\"{color}\" class=\"{POINT_STROKE_CLASSES}\" stroke-width=\"1.5\"><title>{}</title></circle>",
                 x_of(point.x),
                 y_of(point.y),
                 escape(&point.hover)
@@ -361,7 +402,7 @@ fn escape(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Axis, Point, Series};
+    use super::{Axis, Point, Series, Shape};
 
     #[test]
     fn a_value_axis_ends_on_a_nice_step_above_its_maximum() {
@@ -392,6 +433,14 @@ mod tests {
 
         let axis = Axis::counted(2, 2);
         assert!(axis.min < 2.0 && axis.max > 2.0);
+    }
+
+    #[test]
+    fn a_percent_axis_ticks_every_quarter() {
+        let axis = Axis::percent();
+        assert_eq!(axis.max, 100.0);
+        assert_eq!(axis.ticks.len(), 5);
+        assert_eq!(axis.ticks[1].1, "25%");
     }
 
     #[test]
@@ -429,7 +478,7 @@ mod tests {
             &series,
             &horizontal,
             &vertical,
-            true,
+            Shape::Stepped,
             super::NARROW_WIDTH,
             "nothing",
         );
@@ -444,18 +493,30 @@ mod tests {
             &series,
             &horizontal,
             &vertical,
-            false,
+            Shape::Straight,
             super::WIDE_WIDTH,
             "nothing",
         );
         assert!(straight.contains("viewBox=\"0 0 1200 240\""));
         assert!(straight.contains(" L"));
 
+        let scatter = super::lines(
+            &series,
+            &horizontal,
+            &vertical,
+            Shape::Scatter,
+            super::NARROW_WIDTH,
+            "nothing",
+        );
+        assert!(!scatter.contains("<path"));
+        assert_eq!(scatter.matches("<circle").count(), 2);
+        assert!(scatter.contains("r=\"5\""));
+
         let empty = super::lines(
             &[],
             &horizontal,
             &vertical,
-            false,
+            Shape::Straight,
             super::NARROW_WIDTH,
             "nothing",
         );
