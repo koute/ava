@@ -47,6 +47,7 @@ const BASE64_BLOCK_CHARACTERS: usize = 4;
 const BASE64_BITS: u32 = 6;
 
 const MODEL_HEADER: &str = "*model";
+const HARNESS_HEADER: &str = "*harness";
 /// The cells in front of the columns of a row: the model.
 const MODEL_CELLS: usize = 1;
 /// The hues a series is coloured from, hashed from the name of its model.
@@ -78,7 +79,7 @@ struct Scatter {
 
 const DOLLARS_SCATTER: Scatter = Scatter {
     title: "score against dollars",
-    tooltip: "the share of its rounds won every model got against the dollars one of its runs cost, over every harness that drove it",
+    tooltip: "the share of the rounds won against the dollars one run cost, at the prices of the registry",
     measure: "dollars per run",
     quadrants: [
         "good, cheap",
@@ -89,7 +90,7 @@ const DOLLARS_SCATTER: Scatter = Scatter {
 };
 const OUTPUT_SCATTER: Scatter = Scatter {
     title: "score against output tokens",
-    tooltip: "the share of its rounds won every model got against the thousands of output tokens one of its runs generated",
+    tooltip: "the share of the rounds won against the thousands of output tokens one run generated",
     measure: "thousand output tokens per run",
     quadrants: [
         "good, few tokens",
@@ -100,24 +101,25 @@ const OUTPUT_SCATTER: Scatter = Scatter {
 };
 const TIME_SCATTER: Scatter = Scatter {
     title: "score against time to high score",
-    tooltip: "the share of its rounds won every model got against the mean second of the scoring clock at which it pushed its entry of record",
+    tooltip: "the share of the rounds won against the mean second of the scoring clock at which the entry of record was pushed",
     measure: "mean time to high score",
-    quadrants: ["lightning strike", "good, slow", "fast, weak", "slow, weak"],
+    quadrants: ["good, fast", "good, slow", "weak, fast", "weak, slow"],
 };
 const TOKENS_SCATTER: Scatter = Scatter {
     title: "score against tokens to high score",
-    tooltip: "the share of its rounds won every model got against the mean million tokens through the backend until it pushed its entry of record",
+    tooltip: "the share of the rounds won against the mean million tokens through the backend until the entry of record was pushed",
     measure: "mean million tokens to high score",
     quadrants: [
-        "lightning strike",
+        "good, few tokens",
         "good, many tokens",
-        "few tokens, weak",
-        "many tokens, weak",
+        "weak, few tokens",
+        "weak, many tokens",
     ],
 };
 /// The names the script keeps the chosen sorts of the tables under.
 const MODELS_TABLE: &str = "report-models";
 const TOURNAMENTS_TABLE: &str = "report-tournaments";
+const HARNESSES_TABLE: &str = "report-harnesses";
 const OVERALL_HEADER: &str = "#overall|the share of the rounds against other agents won over every chosen tournament, half for a draw";
 const COST_PER_SUCCESS_HEADER: &str = "#cost per passing run|the dollars of its runs at the prices of the registry over the runs a push of which passed the verifier";
 const TOKENS_PER_SUCCESS_HEADER: &str = "#tokens per passing run|the tokens through the backend over the runs a push of which passed the verifier";
@@ -477,6 +479,10 @@ fn budget_share(seconds: u64, limit: u64) -> Option<f64> {
 
 /// The runs sharing one key, summed, with the setup of the first of them.
 struct Group {
+    /// What the runs share: the name of the model, the harness or the agent.
+    key: String,
+    /// The colour of the group on a chart.
+    hue: u64,
     setup: ava_wire::Setup,
     sum: Sum,
 }
@@ -494,8 +500,10 @@ fn grouped<'a>(
             Some((_, group)) => group,
             None => {
                 groups.push((
-                    key,
+                    key.clone(),
                     Group {
+                        hue: views::fnv1a(key.as_bytes()) % HUES,
+                        key,
                         setup: run.setup.clone(),
                         sum: Sum::default(),
                     },
@@ -526,6 +534,34 @@ fn model_key(played: &Played) -> String {
     played.setup.agent.model.clone()
 }
 
+fn harness_key(played: &Played) -> String {
+    played.setup.agent.harness.clone()
+}
+
+/// The hue of `harness` among `harnesses`: spread evenly over the wheel,
+/// since a handful of names hashed can land next to each other.
+fn harness_hue(harnesses: &[String], harness: &str) -> u64 {
+    harnesses
+        .iter()
+        .position(|known| known == harness)
+        .unwrap_or_default() as u64
+        * HUES
+        / harnesses.len().max(1) as u64
+}
+
+/// `played` grouped by harness, every group in the colour the harness has
+/// on every chart of the report.
+fn grouped_by_harness(played: &[Played]) -> Vec<Group> {
+    let mut groups = grouped(played, harness_key);
+    let mut harnesses: Vec<String> = groups.iter().map(|group| group.key.clone()).collect();
+    harnesses.sort();
+    for group in &mut groups {
+        group.hue = harness_hue(&harnesses, &group.key);
+    }
+
+    groups
+}
+
 /// The report over the tournaments `names`, with a link to itself as a file
 /// when `linked`, which the file itself leaves out.
 pub(crate) fn page(names: &[String], linked: bool) -> std::io::Result<String> {
@@ -553,7 +589,8 @@ pub(crate) fn page(names: &[String], linked: bool) -> std::io::Result<String> {
     let by_agent = grouped(&played, agent_key);
     let mut tournaments = tournaments_table(&records, &played);
     tournaments.push_str(&tournaments_chart(&records, &by_model, &played));
-    let mut efficiency = group_table(&by_model, MODELS_TABLE, &COLUMNS);
+    tournaments.push_str(&harness_chart(&by_agent));
+    let mut efficiency = group_table(&by_model, MODELS_TABLE, MODEL_HEADER, &COLUMNS);
     efficiency.push_str(&format!(
         "<div class=\"{}\">{}{}</div>",
         views::CHARTS_GRID_CLASSES,
@@ -611,10 +648,69 @@ pub(crate) fn page(names: &[String], linked: bool) -> std::io::Result<String> {
         ),
     ));
     efficiency.push_str(&pass_curve(&by_model));
+    let by_harness = grouped_by_harness(&played);
+    let mut harnesses = group_table(&by_harness, HARNESSES_TABLE, HARNESS_HEADER, &COLUMNS);
+    harnesses.push_str(&format!(
+        "<div class=\"{}\">{}{}</div>",
+        views::CHARTS_GRID_CLASSES,
+        efficiency_chart(
+            &by_harness,
+            "cost efficiency",
+            "the dollars of every harness's runs at the prices of the registry over the rounds it won, a draw counting half, over every model it drove, the cheapest leftmost",
+            "dollars per round won",
+            Sum::dollars_per_round_won,
+            |dollars| format!("{} per round won", usage::money(dollars)),
+        ),
+        efficiency_chart(
+            &by_harness,
+            "token efficiency",
+            "the tokens through the backend of every harness's runs over the rounds it won, a draw counting half, in thousands, over every model it drove, the leanest leftmost",
+            "thousand tokens per round won",
+            |sum| sum.tokens_per_round_won().map(|tokens| tokens / THOUSAND),
+            |thousands| format!("{thousands:.0}k tokens per round won"),
+        ),
+    ));
+    harnesses.push_str(&format!(
+        "<div class=\"{}\">{}{}</div>",
+        views::CHARTS_GRID_CLASSES,
+        scatter(
+            &by_harness,
+            &DOLLARS_SCATTER,
+            chart::Axis::values,
+            |sum| sum.dollars_per_run(),
+            |dollars| format!("{} per run", usage::money(dollars)),
+        ),
+        scatter(
+            &by_harness,
+            &OUTPUT_SCATTER,
+            chart::Axis::values,
+            Sum::thousand_output_per_run,
+            |thousands| format!("{thousands:.0}k output tokens per run"),
+        ),
+    ));
+    harnesses.push_str(&format!(
+        "<div class=\"{}\">{}{}</div>",
+        views::CHARTS_GRID_CLASSES,
+        scatter(
+            &by_harness,
+            &TIME_SCATTER,
+            |top| chart::Axis::seconds(top as u64),
+            |sum| mean(&sum.high_score_seconds),
+            |seconds| format!("high score after {}", usage::span(seconds as u64)),
+        ),
+        scatter(
+            &by_harness,
+            &TOKENS_SCATTER,
+            chart::Axis::values,
+            |sum| mean(&sum.high_score_tokens).map(|tokens| tokens / MILLION),
+            |millions| format!("{millions:.1}M tokens to the high score"),
+        ),
+    ));
+    harnesses.push_str(&pass_curve(&by_harness));
     body.push_str(&tabs(&[
-        ("tournaments", &tournaments),
-        ("efficiency", &efficiency),
-        ("harnesses", &harness_chart(&by_agent)),
+        ("quality", &tournaments),
+        ("model efficiency", &efficiency),
+        ("harness efficiency", &harnesses),
     ]));
 
     Ok(document(&body))
@@ -715,12 +811,7 @@ fn harness_chart(agents: &[Group]) -> String {
         .map(|harness| chart::Series {
             label: harness.clone(),
             hover: harness.clone(),
-            hue: harnesses
-                .iter()
-                .position(|known| known == harness)
-                .unwrap_or_default() as u64
-                * HUES
-                / harnesses.len() as u64,
+            hue: harness_hue(&harnesses, harness),
             face: String::new(),
             points: scored
                 .iter()
@@ -854,8 +945,8 @@ fn tabs(panes: &[(&str, &String)]) -> String {
 
 /// The table `name` of `groups` over `columns`, one row per model, its
 /// headers sorting it, arriving sorted by the score when it has one.
-fn group_table(groups: &[Group], name: &str, columns: &[Column]) -> String {
-    let mut headers = vec![MODEL_HEADER];
+fn group_table(groups: &[Group], name: &str, first: &str, columns: &[Column]) -> String {
+    let mut headers = vec![first];
     headers.extend(columns.iter().map(|column| column.header()));
     let score = columns
         .iter()
@@ -865,7 +956,7 @@ fn group_table(groups: &[Group], name: &str, columns: &[Column]) -> String {
     let rows = groups
         .iter()
         .map(|group| {
-            let mut row = vec![model_cell(&group.setup.agent.model)];
+            let mut row = vec![model_cell(&group.key)];
             row.extend(columns.iter().map(|column| column.cell(&group.sum)));
             row
         })
@@ -883,15 +974,12 @@ fn model_cell(model: &str) -> String {
     )
 }
 
-/// The line of a model on a chart, without its points yet, in a colour
-/// hashed from its name.
+/// The line of a group on a chart, without its points yet, in its colour.
 fn group_series(group: &Group) -> chart::Series {
-    let model = &group.setup.agent.model;
-
     chart::Series {
-        label: model.clone(),
-        hover: model.clone(),
-        hue: views::fnv1a(model.as_bytes()) % HUES,
+        label: group.key.clone(),
+        hover: group.key.clone(),
+        hue: group.hue,
         face: String::new(),
         points: Vec::new(),
     }
@@ -936,7 +1024,7 @@ fn pass_curve(groups: &[Group]) -> String {
 
     views::chart_panel(
         "passes over the budget",
-        "the share of every model's runs that had a passing push by every share of the budget, over every harness that drove it and the finished rounds of the chosen tournaments, a curve climbing early for a model that passes fast",
+        "the share of the runs that had a passing push by every share of the budget, over the finished rounds of the chosen tournaments, a curve climbing early for one that passes fast",
         &chart::lines(
             &series,
             &chart::Axis::percent().titled("share of the budget spent"),
@@ -1140,7 +1228,7 @@ fn efficiency_chart(
             series.points.push(chart::Point {
                 x: slot as f64,
                 y: *value,
-                hover: format!("{}, {}", model.setup.agent.model, detail(*value)),
+                hover: format!("{}, {}", model.key, detail(*value)),
             });
             series
         })
@@ -1151,7 +1239,7 @@ fn efficiency_chart(
         ticks: ranked
             .iter()
             .enumerate()
-            .map(|(slot, (_, model))| (slot as f64, model.setup.agent.model.clone()))
+            .map(|(slot, (_, model))| (slot as f64, model.key.clone()))
             .collect(),
         title: String::new(),
         icons: Vec::new(),
