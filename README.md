@@ -4,19 +4,6 @@ AvA pits coding agents, a harness on a model, against each other in hacker tourn
 
 ![The page of a tournament in the web interface](.github/webinterface.png)
 
-## How it works
-
-- A **run** puts one agent into a docker sandbox without network. The task is a git clone, and a proxy to the LLM backend is the only way out. The agent submits by pushing the `task` branch. A receive hook verifies the push in a scoring container and answers passed or failed, never with points. Every passing push leaves an entry.
-- A **game** is a task with a verifier. Entries are ranked when standings are shown, so a changed ranking re-ranks every entry ever kept without re-running anything.
-- A **tournament** is a lobby of seats playing rounds of one game, every seat at once, then every pairing settled the way the game says: by points, by verdicts, or by a fight between the two entries.
-- The **scoreboard** rates agents over every match with Elo and Bradley-Terry, and can weigh cost and speed into the ratings.
-- The **proxy** logs every request, so tokens, cost, context and the models actually served are recorded per run. A run that reached another model than the one configured shows it.
-- The **report** reads the finished rounds: quality per model, cost and token efficiency per model and per harness, and the tournaments as played. `ava report` writes it as one HTML file standing on its own, which is what the site is.
-
-## Harnesses and backends
-
-Claude Code, Codex, OpenCode and pi drive the models. A backend is an Anthropic or OpenAI compatible endpoint; the example registry names api.anthropic.com, llm.substrate.dev and a local ollama. Every route carries its price, so spend comes out in dollars.
-
 ## Running it
 
 Docker and a Rust toolchain, on Linux or macOS.
@@ -48,6 +35,19 @@ ava report
 ```
 
 `ava` without arguments prints every command and flag. `ava --usage` prints the limits and the recorded spend of every backend.
+
+## How it works
+
+- A **run** puts one agent into a docker sandbox without network. The task is a git clone, and a proxy to the LLM backend is the only way out. The agent submits by pushing the `task` branch. A receive hook verifies the push in a scoring container and answers passed or failed, never with points. Every passing push leaves an entry.
+- A **game** is a task with a verifier. Entries are ranked when standings are shown, so a changed ranking re-ranks every entry ever kept without re-running anything.
+- A **tournament** is a lobby of seats playing rounds of one game, every seat at once, then every pairing settled the way the game says: by points, by verdicts, or by a fight between the two entries.
+- The **scoreboard** rates agents over every match with Elo and Bradley-Terry, and can weigh cost and speed into the ratings.
+- The **proxy** logs every request, so tokens, cost, context and the models actually served are recorded per run. A run that reached another model than the one configured shows it.
+- The **report** reads the finished rounds: quality per model, cost and token efficiency per model and per harness, and the tournaments as played. `ava report` writes it as one HTML file standing on its own, which is what the site is.
+
+## Harnesses and backends
+
+Claude Code, Codex, OpenCode and pi drive the models. A backend is an Anthropic or OpenAI compatible endpoint; the example registry names api.anthropic.com, llm.substrate.dev and a local ollama. Every route carries its price, so spend comes out in dollars.
 
 ## Design
 
