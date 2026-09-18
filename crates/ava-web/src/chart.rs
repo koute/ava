@@ -11,10 +11,10 @@ pub(crate) const NARROW_WIDTH: f64 = 600.0;
 pub(crate) const WIDE_WIDTH: f64 = 2.0 * NARROW_WIDTH;
 /// The height of the drawing.
 const HEIGHT: f64 = 240.0;
-/// The room the labels of the vertical axis take on the left.
-const LEFT: f64 = 48.0;
-/// The room the labels of the horizontal axis take at the bottom.
-const BOTTOM: f64 = 28.0;
+/// The room the labels and the title of the vertical axis take on the left.
+const LEFT: f64 = 64.0;
+/// The room the labels and the title of the horizontal axis take at the bottom.
+const BOTTOM: f64 = 44.0;
 /// The room above the plot, so the topmost point is not cut.
 const TOP: f64 = 10.0;
 /// The room right of the plot, so the last point is not cut.
@@ -25,6 +25,8 @@ const LABEL_GAP: f64 = 8.0;
 const AXIS_LABEL_DROP: f64 = 20.0;
 /// The lift of a vertical axis label to sit centred on its tick.
 const LABEL_LIFT: f64 = 4.0;
+/// The baseline of an axis title, in from the edge of the drawing.
+const AXIS_TITLE_INSET: f64 = 6.0;
 const FONT_SIZE: u32 = 11;
 const LINE_WIDTH: f64 = 1.25;
 /// The width of the line under the cursor.
@@ -64,6 +66,7 @@ const HOVER_TRANSITION: &str = "0.12s";
 const GRID_CLASSES: &str = "stroke-neutral-800";
 const AXIS_CLASSES: &str = "stroke-neutral-700";
 const LABEL_CLASSES: &str = "fill-neutral-500 font-mono";
+const AXIS_TITLE_CLASSES: &str = "fill-neutral-400 font-sans";
 const POINT_STROKE_CLASSES: &str = "stroke-neutral-900";
 const LEGEND_CLASSES: &str = "flex flex-wrap gap-x-4 gap-y-1.5 mt-3 text-xs text-neutral-300";
 const LEGEND_ITEM_CLASSES: &str =
@@ -109,9 +112,17 @@ pub(crate) struct Axis {
     pub(crate) min: f64,
     pub(crate) max: f64,
     pub(crate) ticks: Vec<(f64, String)>,
+    /// What the axis measures, written along it.
+    pub(crate) title: String,
 }
 
 impl Axis {
+    /// The axis with `title` written along it.
+    pub(crate) fn titled(mut self, title: &str) -> Self {
+        self.title = title.to_string();
+        self
+    }
+
     /// An axis from zero to the nice step above `max`, a tick every step;
     /// an axis over nothing spans one.
     pub(crate) fn values(max: f64) -> Self {
@@ -132,6 +143,7 @@ impl Axis {
             min: 0.0,
             max: top,
             ticks,
+            title: String::new(),
         }
     }
 
@@ -159,7 +171,12 @@ impl Axis {
             (first as f64, last as f64)
         };
 
-        Self { min, max, ticks }
+        Self {
+            min,
+            max,
+            ticks,
+            title: String::new(),
+        }
     }
 
     /// An axis from nothing to the whole, a tick every quarter, labelled in percent.
@@ -175,6 +192,7 @@ impl Axis {
             min: 0.0,
             max: PERCENT_MAX,
             ticks,
+            title: String::new(),
         }
     }
 
@@ -203,6 +221,7 @@ impl Axis {
             min: 0.0,
             max: top as f64,
             ticks,
+            title: String::new(),
         }
     }
 
@@ -301,6 +320,23 @@ pub(crate) fn lines(
         "<line x1=\"{LEFT}\" y1=\"{baseline:.1}\" x2=\"{:.1}\" y2=\"{baseline:.1}\" class=\"{AXIS_CLASSES}\"/>",
         width - RIGHT
     ));
+    if !horizontal.title.is_empty() {
+        svg.push_str(&format!(
+            "<text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"middle\" class=\"{AXIS_TITLE_CLASSES}\">{}</text>",
+            LEFT + plot_width / 2.0,
+            HEIGHT - AXIS_TITLE_INSET,
+            escape(&horizontal.title)
+        ));
+    }
+    // Rotated a quarter turn left, so its x runs up the drawing and its y in from the left edge.
+    if !vertical.title.is_empty() {
+        svg.push_str(&format!(
+            "<text transform=\"rotate(-90)\" x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"middle\" class=\"{AXIS_TITLE_CLASSES}\">{}</text>",
+            -(TOP + plot_height / 2.0),
+            AXIS_TITLE_INSET + f64::from(FONT_SIZE),
+            escape(&vertical.title)
+        ));
+    }
 
     for (index, series) in series.iter().enumerate() {
         if series.points.is_empty() {
@@ -471,8 +507,8 @@ mod tests {
                 },
             ],
         }];
-        let horizontal = Axis::counted(0, 2);
-        let vertical = Axis::values(3.0);
+        let horizontal = Axis::counted(0, 2).titled("round");
+        let vertical = Axis::values(3.0).titled("points");
 
         let stepped = super::lines(
             &series,
@@ -483,6 +519,9 @@ mod tests {
             "nothing",
         );
         assert!(stepped.contains(" H"));
+        assert!(stepped.contains(">round</text>"));
+        assert!(stepped.contains("rotate(-90)"));
+        assert!(stepped.contains(">points</text>"));
         assert!(stepped.contains("<title>second</title>"));
         assert!(stepped.contains("<title>a on b</title>"));
         assert!(stepped.contains(".line-chart:has(.series-0:hover) .legend-0"));

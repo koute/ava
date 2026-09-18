@@ -9,13 +9,10 @@ An agent is a harness on a model, as the ratings key it, so two seats holding th
 Six tiles count what the report spans: the tournaments, their finished rounds, the runs, the dollars, the tokens through the backends and the run time. Three charts follow, drawn like the charts of a tournament page and hovering the same way:
 
 - Passes over the budget, one stepped line per agent: the share of its runs that had a passing push by every share of the budget, so a line climbing early belongs to an agent that passes fast and a line staying low to one that passes rarely. The budget is the share of the seconds a run was given, which is what lets tournaments of different lengths share the chart.
-- Score against dollars and score against output tokens, one mark per agent at every thinking level it played: the share of its rounds won against what one of its runs cost, in dollars and in thousands of output tokens. The marks towards the top left won cheaply.
+- Score against dollars and score against output tokens, one mark per agent: the share of its rounds won against what one of its runs cost, in dollars and in thousands of output tokens. The marks towards the top left won cheaply.
 
-Three tables over every agent follow, then one per tournament:
+Two tables over every agent follow:
 
 - Cost: the runs, the runs that passed, the rounds against other agents as won-drawn-lost and the share of them won, the dollars and what they come to per run, per passing run and per round won, a draw counting half, and the tokens by kind: output, output per round won, input not read from the cache, and read from it.
 - Time: the median share of the budget spent when the first push passed, over the runs that passed, and when the entry of record was pushed, over the runs that kept one; the seconds of the runs over the seconds they were given; the seconds spent inside requests to the backend over the seconds of the runs, which tells a slow backend from a slow harness and passes the whole when a harness had requests in flight at once; the mean seconds to the first token; the tokens and the requests a minute; the largest share of its window a run reached; the compactions; the model calls answered with an error, with the ones cut short upstream and the ones abandoned behind the hover.
-- Thinking levels: one row per agent at every thinking level it was seated at, over the brief columns, so the same model at two levels stands in two rows one under the other.
-- Every tournament: what it fixed, its agents over the brief columns, the points they banked and the points per dollar for a game that ranks its entries, and its score chart as the tournament page draws it.
-
-Every table sorts by score, the cheapest run first among equals. Every header explains its column behind the hover, and the medians leave out the runs that never passed or banked rather than counting them at the end of the budget, which is what the pass share beside them is for.
+Both tables arrive sorted by score, the cheapest run first among equals, and their headers sort them by any column, a blank cell last either way, the way the tables of the interface do. Every header explains its column behind the hover, and the medians leave out the runs that never passed or banked rather than counting them at the end of the budget, which is what the pass share beside them is for.

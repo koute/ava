@@ -38,6 +38,8 @@ impl Default for Serve {
 }
 
 pub(crate) const TAILWIND: &str = include_str!("../assets/tailwind.js");
+/// The script sorting a table by its headers, loaded by the layout and inlined into a report.
+pub(crate) const TABLE_SORT: &str = include_str!("../assets/table-sort.js");
 
 /// The vendored interface fonts, served by file name.
 pub(crate) const FONTS: [(&str, &[u8]); 4] = [
@@ -320,6 +322,10 @@ fn view(segments: &[&str], query: Option<&str>) -> Answer {
         ["setup"] => views::setup_page(),
         ["assets", "tailwind.js"] => {
             return tiny_http::Response::from_string(TAILWIND)
+                .with_header(content_type(JAVASCRIPT_CONTENT_TYPE));
+        }
+        ["assets", "table-sort.js"] => {
+            return tiny_http::Response::from_string(TABLE_SORT)
                 .with_header(content_type(JAVASCRIPT_CONTENT_TYPE));
         }
         ["assets", "fonts", file] => {

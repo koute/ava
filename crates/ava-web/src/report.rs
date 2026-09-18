@@ -18,8 +18,6 @@ const MAIN_CLASSES: &str = "w-full px-6 py-6";
 const HEADING_CLASSES: &str = "text-lg font-semibold text-neutral-100";
 const HEADING_ROW_CLASSES: &str = "flex items-baseline gap-4";
 const SUBTITLE_CLASSES: &str = "text-xs text-neutral-500 mt-1";
-const DETAIL_CLASSES: &str = "text-xs text-neutral-500 mb-3";
-const LEVEL_CLASSES: &str = "font-mono text-neutral-300";
 const FILE_PREFIX: &str = "report";
 const FILE_SUFFIX: &str = ".html";
 const NAME_SEPARATOR: &str = "-";
@@ -27,7 +25,6 @@ const DOWNLOAD_LABEL: &str = "download";
 const NO_TOURNAMENTS_NOTE: &str = "no tournament chosen, check some on the tournaments page";
 const NO_ROUNDS_NOTE: &str = "no finished round in the chosen tournaments";
 const NO_AGENTS_NOTE: &str = "no run in a finished round";
-const UNSET_LEVEL: &str = "-";
 const PERCENT: f64 = 100.0;
 const THOUSAND: f64 = 1_000.0;
 const MILLION: f64 = 1_000_000.0;
@@ -43,10 +40,11 @@ const BASE64_BLOCK_CHARACTERS: usize = 4;
 const BASE64_BITS: u32 = 6;
 
 const AGENT_HEADER: &str = "*agent";
-const LEVEL_HEADER: &str = "level|the thinking level the agent was seated at";
-const POINTS_HEADER: &str =
-    "#points|the points of the entries of record it kept, summed over the finished rounds";
-const POINTS_PER_DOLLAR_HEADER: &str = "#points per $|those points over the dollars of its runs";
+/// The cells in front of the columns of a row: the avatar and the name.
+const AGENT_CELLS: usize = 2;
+/// The names the script keeps the chosen sort of the two tables under.
+const COST_TABLE: &str = "report-cost";
+const TIME_TABLE: &str = "report-time";
 
 /// The columns of the table over what the agents got for their dollars and
 /// tokens.
@@ -77,22 +75,6 @@ const TIME_COLUMNS: [Column; 10] = [
     Column::Compactions,
     Column::Failed,
 ];
-/// The columns of the table over every thinking level an agent played at,
-/// and of the table of every tournament.
-const BRIEF_COLUMNS: [Column; 11] = [
-    Column::Runs,
-    Column::Passed,
-    Column::Rounds,
-    Column::Score,
-    Column::DollarsPerRun,
-    Column::DollarsPerRoundWon,
-    Column::OutputPerRoundWon,
-    Column::FirstPass,
-    Column::Banked,
-    Column::Waiting,
-    Column::PeakContext,
-];
-
 /// One measure of a group of runs, a column of the tables.
 #[derive(Clone, Copy)]
 enum Column {
@@ -239,8 +221,6 @@ impl Column {
 
 /// One run of a seat in a finished round: what it spent and what came of it.
 struct Played {
-    /// The tournament, by its place among the chosen ones.
-    tournament: usize,
     setup: ava_wire::Setup,
     limit_seconds: u64,
     wall_seconds: u64,
@@ -257,27 +237,19 @@ struct Played {
     /// The rounds the seat got against other agents in the round, on the run
     /// of the last turn.
     rounds: ava_wire::Tally,
-    /// The points of the entry of record, on the run of the last turn of a
-    /// game that ranks.
-    points: Option<u64>,
 }
 
 /// Every run played in the finished rounds of `record`.
 fn played_runs(
-    tournament: usize,
     record: &ava_wire::Tournament,
     registry: &registry::Registry,
 ) -> std::io::Result<Vec<Played>> {
     let game = ava_game::find(&record.game);
     let last_turn = game.map_or(0, |game| game.turns().len() - 1);
-    let kept = game
-        .map(|game| views::kept_entries(record, game))
-        .transpose()?
-        .unwrap_or_default();
     let labels: Vec<String> = record.seats.iter().map(|seat| seat.agent.label()).collect();
     let mut played = Vec::new();
 
-    for (index, round) in record.rounds.iter().enumerate() {
+    for round in &record.rounds {
         if round.finished_seconds.is_none() {
             continue;
         }
@@ -313,7 +285,6 @@ fn played_runs(
                     .then(|| metrics.peak_context_tokens as f64 / window)
             });
             played.push(Played {
-                tournament,
                 setup: setup.clone(),
                 limit_seconds: run.limit_seconds,
                 wall_seconds: run.wall_seconds().unwrap_or_default(),
@@ -332,11 +303,6 @@ fn played_runs(
                 } else {
                     ava_wire::Tally::default()
                 },
-                points: kept
-                    .iter()
-                    .filter(|_| last)
-                    .find(|kept| kept.round == index && kept.seat == entry.seat)
-                    .and_then(views::KeptEntries::points),
                 metrics: run.metrics,
             });
         }
@@ -381,7 +347,6 @@ struct Sum {
     first_pass_shares: Vec<f64>,
     /// The share of its budget every run that kept an entry had spent at it.
     banked_shares: Vec<f64>,
-    points: u64,
 }
 
 impl Sum {
@@ -422,7 +387,6 @@ impl Sum {
             self.banked_shares
                 .extend(budget_share(seconds, played.limit_seconds));
         }
-        self.points += played.points.unwrap_or_default();
     }
 
     fn unpriced(&self) -> u64 {
@@ -482,10 +446,6 @@ impl Sum {
         ratio(self.requests as f64, self.minutes())
     }
 
-    fn points_per_dollar(&self) -> Option<f64> {
-        ratio(self.points as f64, self.dollars)
-    }
-
     /// The output tokens one run generated, in thousands.
     fn thousand_output_per_run(&self) -> Option<f64> {
         ratio(self.output_tokens as f64 / THOUSAND, self.runs as f64)
@@ -502,9 +462,6 @@ fn ratio(numerator: f64, denominator: f64) -> Option<f64> {
 fn budget_share(seconds: u64, limit: u64) -> Option<f64> {
     ratio(seconds as f64, limit as f64).map(|share| share.min(1.0))
 }
-
-/// A column of one table alone: its header and the cell of a sum.
-type Extra<'a> = (&'a str, &'a dyn Fn(&Sum) -> String);
 
 /// The runs sharing one key, summed, with the setup of the first of them.
 struct Group {
@@ -553,19 +510,6 @@ fn agent_key(played: &Played) -> String {
     played.setup.agent.label()
 }
 
-/// The agent with its thinking level, the key of the levels table.
-fn level_key(played: &Played) -> String {
-    format!(
-        "{}\0{}",
-        played.setup.agent.label(),
-        level_of(&played.setup)
-    )
-}
-
-fn level_of(setup: &ava_wire::Setup) -> &str {
-    setup.thinking.as_deref().unwrap_or(UNSET_LEVEL)
-}
-
 /// The report over the tournaments `names`, with a link to itself as a file
 /// when `linked`, which the file itself leaves out.
 pub(crate) fn page(names: &[String], linked: bool) -> std::io::Result<String> {
@@ -581,8 +525,8 @@ pub(crate) fn page(names: &[String], linked: bool) -> std::io::Result<String> {
     }
 
     let mut played = Vec::new();
-    for (index, record) in records.iter().enumerate() {
-        played.extend(played_runs(index, record, &registry)?);
+    for record in &records {
+        played.extend(played_runs(record, &registry)?);
     }
     if played.is_empty() {
         body.push_str(&note(NO_ROUNDS_NOTE));
@@ -590,13 +534,6 @@ pub(crate) fn page(names: &[String], linked: bool) -> std::io::Result<String> {
     }
 
     let by_agent = grouped(&played, agent_key);
-    // The levels of one agent stand together, in the order of the agents.
-    let mut by_level = grouped(&played, level_key);
-    by_level.sort_by_key(|group| {
-        by_agent
-            .iter()
-            .position(|agent| agent.setup.agent == group.setup.agent)
-    });
     body.push_str(&summary(&records, &played));
     body.push_str(&pass_curve(&registry, &by_agent));
     body.push_str(&format!(
@@ -604,17 +541,19 @@ pub(crate) fn page(names: &[String], linked: bool) -> std::io::Result<String> {
         views::CHARTS_GRID_CLASSES,
         scatter(
             &registry,
-            &by_level,
+            &by_agent,
             "score against dollars",
-            "every agent at every thinking level it played: the share of its rounds won against the dollars one of its runs cost",
+            "the share of its rounds won every agent got against the dollars one of its runs cost",
+            "dollars per run",
             |sum| sum.dollars_per_run(),
             |dollars| format!("{} per run", usage::money(dollars)),
         ),
         scatter(
             &registry,
-            &by_level,
+            &by_agent,
             "score against output tokens",
-            "every agent at every thinking level it played: the share of its rounds won against the thousands of output tokens one of its runs generated",
+            "the share of its rounds won every agent got against the thousands of output tokens one of its runs generated",
+            "thousand output tokens per run",
             Sum::thousand_output_per_run,
             |thousands| format!("{thousands:.0}k output tokens per run"),
         ),
@@ -622,21 +561,13 @@ pub(crate) fn page(names: &[String], linked: bool) -> std::io::Result<String> {
     body.push_str(&section(
         "cost",
         "what every agent got for its dollars and tokens, over the finished rounds of the chosen tournaments",
-        &group_table(&registry, &by_agent, &COST_COLUMNS, false, &[]),
+        &group_table(&registry, &by_agent, COST_TABLE, &COST_COLUMNS),
     ));
     body.push_str(&section(
         "time",
         "how every agent spent its seconds",
-        &group_table(&registry, &by_agent, &TIME_COLUMNS, false, &[]),
+        &group_table(&registry, &by_agent, TIME_TABLE, &TIME_COLUMNS),
     ));
-    body.push_str(&section(
-        "thinking levels",
-        "every agent at every thinking level it was seated at",
-        &group_table(&registry, &by_level, &BRIEF_COLUMNS, true, &[]),
-    ));
-    for (index, record) in records.iter().enumerate() {
-        body.push_str(&tournament_section(&registry, index, record, &played)?);
-    }
 
     Ok(document(&body))
 }
@@ -729,40 +660,31 @@ fn section(title: &str, tooltip: &str, table: &str) -> String {
     )
 }
 
-/// The table of `groups` over `columns`, one row per group, the thinking
-/// level of each beside its name when `levelled`, and `extra` columns after
-/// them, each a header with the cell of every group.
+/// The table `name` of `groups` over `columns`, one row per group, its
+/// headers sorting it, arriving sorted by the score when it has one.
 fn group_table(
     registry: &registry::Registry,
     groups: &[Group],
+    name: &str,
     columns: &[Column],
-    levelled: bool,
-    extra: &[Extra],
 ) -> String {
     let mut headers = vec!["", AGENT_HEADER];
-    if levelled {
-        headers.push(LEVEL_HEADER);
-    }
     headers.extend(columns.iter().map(|column| column.header()));
-    headers.extend(extra.iter().map(|(header, _)| *header));
+    let score = columns
+        .iter()
+        .position(|column| matches!(column, Column::Score))
+        .map(|column| column + AGENT_CELLS);
 
     let rows = groups
         .iter()
         .map(|group| {
             let mut row = agent_cells(registry, &group.setup.agent).to_vec();
-            if levelled {
-                row.push(format!(
-                    "<span class=\"{LEVEL_CLASSES}\">{}</span>",
-                    views::escape(level_of(&group.setup))
-                ));
-            }
             row.extend(columns.iter().map(|column| column.cell(&group.sum)));
-            row.extend(extra.iter().map(|(_, cell)| cell(&group.sum)));
             row
         })
         .collect();
 
-    views::table(&headers, rows, Some(NO_AGENTS_NOTE))
+    views::sorted_table(name, score, &headers, rows, Some(NO_AGENTS_NOTE))
 }
 
 /// The avatar of `agent` and the name it goes by, the harness on the model
@@ -790,23 +712,12 @@ fn agent_cells(registry: &registry::Registry, agent: &ava_wire::Agent) -> [Strin
 }
 
 /// The line of a group on a chart, without its points yet: named by the
-/// name the agent goes by, at its thinking level when `levelled`, in the
-/// colour of its avatar.
-fn group_series(
-    registry: &registry::Registry,
-    setup: &ava_wire::Setup,
-    levelled: bool,
-) -> chart::Series {
-    let name = views::agent_name(registry, &setup.agent);
-    let label = if levelled {
-        format!("{name} at {}", level_of(setup))
-    } else {
-        name
-    };
+/// name the agent goes by, in the colour of its avatar.
+fn group_series(registry: &registry::Registry, setup: &ava_wire::Setup) -> chart::Series {
     let (hue, _) = views::avatar_grid(&setup.agent);
 
     chart::Series {
-        label,
+        label: views::agent_name(registry, &setup.agent),
         hover: setup.label(),
         hue,
         face: views::avatar(&setup.agent, views::CHART_AVATAR_CLASSES),
@@ -820,7 +731,7 @@ fn pass_curve(registry: &registry::Registry, groups: &[Group]) -> String {
     let series: Vec<chart::Series> = groups
         .iter()
         .map(|group| {
-            let mut series = group_series(registry, &group.setup, false);
+            let mut series = group_series(registry, &group.setup);
             let mut shares = group.sum.first_pass_shares.clone();
             shares.sort_by(f64::total_cmp);
             series.points.push(chart::Point {
@@ -856,8 +767,8 @@ fn pass_curve(registry: &registry::Registry, groups: &[Group]) -> String {
         "the share of every agent's runs that had a passing push by every share of the budget, over the finished rounds of the chosen tournaments, a curve climbing early for an agent that passes fast",
         &chart::lines(
             &series,
-            &chart::Axis::percent(),
-            &chart::Axis::percent(),
+            &chart::Axis::percent().titled("share of the budget spent"),
+            &chart::Axis::percent().titled("share of the runs passed"),
             chart::Shape::Stepped,
             chart::WIDE_WIDTH,
             NO_AGENTS_NOTE,
@@ -872,6 +783,7 @@ fn scatter(
     groups: &[Group],
     title: &str,
     tooltip: &str,
+    measure: &str,
     value: impl Fn(&Sum) -> Option<f64>,
     detail: impl Fn(f64) -> String,
 ) -> String {
@@ -882,7 +794,7 @@ fn scatter(
             let score = group.sum.score()?;
             let x = value(&group.sum)?;
             top = top.max(x);
-            let mut series = group_series(registry, &group.setup, true);
+            let mut series = group_series(registry, &group.setup);
             series.points.push(chart::Point {
                 x,
                 y: score * PERCENT,
@@ -897,8 +809,8 @@ fn scatter(
         tooltip,
         &chart::lines(
             &series,
-            &chart::Axis::values(top),
-            &chart::Axis::percent(),
+            &chart::Axis::values(top).titled(measure),
+            &chart::Axis::percent().titled("share of the rounds won"),
             chart::Shape::Scatter,
             chart::NARROW_WIDTH,
             NO_AGENTS_NOTE,
@@ -906,65 +818,9 @@ fn scatter(
     )
 }
 
-/// One tournament: what it fixed, its agents over the brief columns, the
-/// points they banked for a game that ranks, and its score chart.
-fn tournament_section(
-    registry: &registry::Registry,
-    index: usize,
-    record: &ava_wire::Tournament,
-    played: &[Played],
-) -> std::io::Result<String> {
-    let own: Vec<&Played> = played
-        .iter()
-        .filter(|run| run.tournament == index)
-        .collect();
-    let ranked = own.iter().any(|run| run.points.is_some());
-    let groups = grouped(own.iter().copied(), agent_key);
-    let points_cell = |sum: &Sum| sum.points.to_string();
-    let points_per_dollar_cell = |sum: &Sum| {
-        sum.points_per_dollar()
-            .map(|points| format!("{points:.0}"))
-            .unwrap_or_default()
-    };
-    let extra: Vec<Extra> = if ranked {
-        vec![
-            (POINTS_HEADER, &points_cell),
-            (POINTS_PER_DOLLAR_HEADER, &points_per_dollar_cell),
-        ]
-    } else {
-        Vec::new()
-    };
-
-    let labels: Vec<String> = record.seats.iter().map(|seat| seat.agent.label()).collect();
-    let rounds_labeled = views::rounds_labeled(record, &labels)?;
-    let finished = record.finished_rounds().count();
-    let detail = format!(
-        "{}, {} seconds a run, {} seats, {finished} of {} rounds finished",
-        views::escape(&record.game),
-        record.limit_seconds,
-        record.seats.len(),
-        record.rounds.len()
-    );
-
-    Ok(format!(
-        "<p class=\"{}\"><span class=\"{}\">{}</span></p><p class=\"{DETAIL_CLASSES}\">{detail}</p>{}{}",
-        views::TITLE_CLASSES,
-        views::MONO_CLASSES,
-        views::escape(&record.name),
-        group_table(registry, &groups, &BRIEF_COLUMNS, false, &extra),
-        views::score_chart(
-            record,
-            registry,
-            &labels,
-            &rounds_labeled,
-            chart::WIDE_WIDTH
-        ),
-    ))
-}
-
 /// The whole document around `body`: the head of the layout with the styles
-/// and the fonts inside it in place of their addresses, so nothing is
-/// fetched from the server.
+/// and the fonts inside it in place of their addresses, and the script
+/// sorting the tables, so nothing is fetched from the server.
 fn document(body: &str) -> String {
     let (head, _) = views::LAYOUT_TEMPLATE
         .split_once(HEAD_END)
@@ -982,7 +838,8 @@ fn document(body: &str) -> String {
     );
 
     format!(
-        "{head}{HEAD_END}<body class=\"{BODY_CLASSES}\"><main class=\"{MAIN_CLASSES}\">{body}</main></body></html>"
+        "{head}{HEAD_END}<body class=\"{BODY_CLASSES}\"><main class=\"{MAIN_CLASSES}\">{body}</main><script>{}</script></body></html>",
+        crate::serve::TABLE_SORT
     )
 }
 
@@ -1051,7 +908,6 @@ mod tests {
 
     fn played(passed: Option<u64>, cost: Option<f64>, won: u64, lost: u64) -> Played {
         Played {
-            tournament: 0,
             setup: ava_wire::Setup {
                 agent: ava_wire::Agent {
                     harness: "pi".to_string(),
@@ -1079,7 +935,6 @@ mod tests {
                 drawn: 0,
                 lost,
             },
-            points: None,
         }
     }
 
@@ -1151,6 +1006,7 @@ mod tests {
         assert!(document.contains("data:font/woff2;base64,"));
         assert!(!document.contains("/assets/"));
         assert!(document.contains("<title>report"));
+        assert!(document.contains("table[data-sortable]"));
         assert!(document.ends_with("</html>"));
     }
 }

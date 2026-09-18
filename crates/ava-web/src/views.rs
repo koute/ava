@@ -3277,8 +3277,8 @@ pub(crate) fn score_chart(
         "the rounds every agent won and half the rounds it drew against other agents, summed over the finished rounds",
         &chart::lines(
             &series,
-            &chart::Axis::counted(1, record.rounds.len() as u64),
-            &chart::Axis::values(top),
+            &chart::Axis::counted(1, record.rounds.len() as u64).titled("round"),
+            &chart::Axis::values(top).titled("score"),
             chart::Shape::Stepped,
             width,
             NO_SCORE_YET,
@@ -3346,8 +3346,8 @@ fn points_chart(
         "the points of the entry of record every seat kept in the finished rounds, at nothing in a round it kept none",
         &chart::lines(
             &series,
-            &chart::Axis::counted(1, record.rounds.len() as u64),
-            &chart::Axis::values(top as f64),
+            &chart::Axis::counted(1, record.rounds.len() as u64).titled("round"),
+            &chart::Axis::values(top as f64).titled("points"),
             chart::Shape::Straight,
             chart::NARROW_WIDTH,
             NO_POINTS_YET,
@@ -3424,8 +3424,8 @@ fn banked_chart(
         ),
         chart::lines(
             &series,
-            &chart::Axis::seconds(latest),
-            &chart::Axis::values(ceiling as f64),
+            &chart::Axis::seconds(latest).titled("seconds of the run"),
+            &chart::Axis::values(ceiling as f64).titled("points"),
             chart::Shape::Stepped,
             chart::WIDE_WIDTH,
             NO_POINTS_YET,
@@ -5203,7 +5203,7 @@ pub(crate) fn table(headers: &[&str], rows: Vec<Vec<String>>, empty: Option<&str
 
 /// A table its headers sort, arriving sorted by `sorted`, the script keeping
 /// the chosen column under `name` across a refresh.
-fn sorted_table(
+pub(crate) fn sorted_table(
     name: &str,
     sorted: Option<usize>,
     headers: &[&str],
