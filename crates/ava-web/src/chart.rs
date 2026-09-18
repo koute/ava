@@ -13,8 +13,15 @@ pub(crate) const WIDE_WIDTH: f64 = 2.0 * NARROW_WIDTH;
 const HEIGHT: f64 = 240.0;
 /// The room the labels and the title of the vertical axis take on the left.
 const LEFT: f64 = 64.0;
-/// The room the labels and the title of the horizontal axis take at the bottom.
-const BOTTOM: f64 = 44.0;
+/// The room the labels of the horizontal axis take at the bottom, and what
+/// a second line of a label, an axis title and a row of icons add to it.
+const LABEL_ROOM: f64 = 28.0;
+const LINE_ROOM: f64 = 12.0;
+const AXIS_TITLE_ROOM: f64 = 16.0;
+/// The width of a character of a tick label, for telling when neighbours would collide.
+const CHARACTER_WIDTH: f64 = 6.2;
+/// A tick label too wide for its slot breaks in two here.
+const LABEL_BREAK: char = '-';
 /// The room above the plot, so the topmost point is not cut.
 const TOP: f64 = 10.0;
 /// The room right of the plot, so the last point is not cut.
@@ -25,9 +32,9 @@ const LABEL_GAP: f64 = 8.0;
 const AXIS_LABEL_DROP: f64 = 20.0;
 /// The lift of a vertical axis label to sit centred on its tick.
 const LABEL_LIFT: f64 = 4.0;
-/// The side of an icon under a horizontal tick label and how far under the axis it sits.
-const ICON_SIDE: f64 = 14.0;
-const ICON_DROP: f64 = 26.0;
+/// The side of the icon in front of a horizontal tick label and the gap to the label.
+const ICON_SIDE: f64 = 18.0;
+const ICON_GAP: f64 = 6.0;
 /// Icons stay in the background of the labels they belong to.
 const ICON_OPACITY: &str = "0.6";
 /// The baseline of an axis title, in from the edge of the drawing.
@@ -83,9 +90,11 @@ const AXIS_TITLE_CLASSES: &str = "fill-neutral-400 font-sans";
 const QUADRANT_LINE_CLASSES: &str = "stroke-neutral-700";
 const QUADRANT_DASHES: &str = "4 4";
 const QUADRANT_LABEL_CLASSES: &str = "fill-neutral-500 font-sans";
-/// The tint of the quadrant to be in and of the one to stay out of.
+/// The tints of the quadrant to be in, of the one to stay out of, and of the
+/// two mixed ones between them.
 const GOOD_QUADRANT_CLASSES: &str = "fill-emerald-500/10";
 const BAD_QUADRANT_CLASSES: &str = "fill-red-500/10";
+const MIXED_QUADRANT_CLASSES: &str = "fill-amber-500/5";
 /// How far a quadrant label sits in from the corner of its quadrant.
 const QUADRANT_LABEL_INSET: f64 = 8.0;
 const QUADRANT_LABEL_DROP: f64 = 14.0;
@@ -146,7 +155,7 @@ pub(crate) struct Axis {
     pub(crate) ticks: Vec<(f64, String)>,
     /// What the axis measures, written along it.
     pub(crate) title: String,
-    /// An icon under a tick label, as the address of its image, by tick value.
+    /// An icon in front of a tick label, as the address of its image, by tick value.
     pub(crate) icons: Vec<(f64, String)>,
 }
 
@@ -320,7 +329,27 @@ pub(crate) fn lines(
     }
 
     let plot_width = width - LEFT - RIGHT;
-    let plot_height = HEIGHT - TOP - BOTTOM;
+    // A label wider than its slot breaks into two lines at its last dash.
+    let slot_width = plot_width / horizontal.ticks.len().max(1) as f64;
+    let lines_of = |label: &str| -> Vec<String> {
+        let wide = label.chars().count() as f64 * CHARACTER_WIDTH > slot_width;
+        match label.rfind(LABEL_BREAK).filter(|_| wide) {
+            Some(cut) => vec![label[..=cut].to_string(), label[cut + 1..].to_string()],
+            None => vec![label.to_string()],
+        }
+    };
+    let wrapped = horizontal
+        .ticks
+        .iter()
+        .any(|(_, label)| lines_of(label).len() > 1);
+    let bottom = LABEL_ROOM
+        + if wrapped { LINE_ROOM } else { 0.0 }
+        + if horizontal.title.is_empty() {
+            0.0
+        } else {
+            AXIS_TITLE_ROOM
+        };
+    let plot_height = HEIGHT - TOP - bottom;
     let x_of = |x: f64| LEFT + (x - horizontal.min) / horizontal.span() * plot_width;
     let y_of = |y: f64| TOP + plot_height - (y - vertical.min) / vertical.span() * plot_height;
 
@@ -347,20 +376,46 @@ pub(crate) fn lines(
             "<line x1=\"{x:.1}\" y1=\"{baseline:.1}\" x2=\"{x:.1}\" y2=\"{:.1}\" class=\"{AXIS_CLASSES}\"/>",
             baseline + LABEL_GAP / 2.0
         ));
-        if !label.is_empty() {
-            svg.push_str(&format!(
-                "<text x=\"{x:.1}\" y=\"{:.1}\" text-anchor=\"middle\" class=\"{LABEL_CLASSES}\">{}</text>",
-                baseline + AXIS_LABEL_DROP,
-                escape(label)
-            ));
+        if label.is_empty() {
+            continue;
         }
-    }
-    for (value, address) in &horizontal.icons {
+        // An icon stands in front of the label and the two centre on the tick together.
+        let lines = lines_of(label);
+        let icon = horizontal
+            .icons
+            .iter()
+            .find(|(at, _)| at == value)
+            .map(|(_, address)| address);
+        let text_width = lines
+            .iter()
+            .map(|line| line.chars().count() as f64 * CHARACTER_WIDTH)
+            .fold(0.0, f64::max);
+        let (text_x, anchor) = match icon {
+            Some(address) => {
+                let left = x - (ICON_SIDE + ICON_GAP + text_width) / 2.0;
+                svg.push_str(&format!(
+                    "<image href=\"{}\" x=\"{left:.1}\" y=\"{:.1}\" width=\"{ICON_SIDE}\" height=\"{ICON_SIDE}\" opacity=\"{ICON_OPACITY}\"/>",
+                    escape(address),
+                    baseline + AXIS_LABEL_DROP - LABEL_LIFT - ICON_SIDE / 2.0
+                ));
+                (left + ICON_SIDE + ICON_GAP, "start")
+            }
+            None => (x, "middle"),
+        };
+        let spans: String = lines
+            .iter()
+            .enumerate()
+            .map(|(line, text)| {
+                format!(
+                    "<tspan x=\"{text_x:.1}\" dy=\"{}\">{}</tspan>",
+                    if line == 0 { 0.0 } else { LINE_ROOM },
+                    escape(text)
+                )
+            })
+            .collect();
         svg.push_str(&format!(
-            "<image href=\"{}\" x=\"{:.1}\" y=\"{:.1}\" width=\"{ICON_SIDE}\" height=\"{ICON_SIDE}\" opacity=\"{ICON_OPACITY}\"/>",
-            escape(address),
-            x_of(*value) - ICON_SIDE / 2.0,
-            baseline + ICON_DROP
+            "<text x=\"{text_x:.1}\" y=\"{:.1}\" text-anchor=\"{anchor}\" class=\"{LABEL_CLASSES}\">{spans}</text>",
+            baseline + AXIS_LABEL_DROP
         ));
     }
     svg.push_str(&format!(
@@ -393,6 +448,8 @@ pub(crate) fn lines(
         svg.push_str(&format!(
             "<rect x=\"{left}\" y=\"{top}\" width=\"{:.1}\" height=\"{:.1}\" class=\"{GOOD_QUADRANT_CLASSES}\"/>\
              <rect x=\"{middle_x:.1}\" y=\"{middle_y:.1}\" width=\"{:.1}\" height=\"{:.1}\" class=\"{BAD_QUADRANT_CLASSES}\"/>\
+             <rect x=\"{middle_x:.1}\" y=\"{top}\" width=\"{:.1}\" height=\"{:.1}\" class=\"{MIXED_QUADRANT_CLASSES}\"/>\
+             <rect x=\"{left}\" y=\"{middle_y:.1}\" width=\"{:.1}\" height=\"{:.1}\" class=\"{MIXED_QUADRANT_CLASSES}\"/>\
              <line x1=\"{middle_x:.1}\" y1=\"{top}\" x2=\"{middle_x:.1}\" y2=\"{bottom:.1}\" stroke-dasharray=\"{QUADRANT_DASHES}\" class=\"{QUADRANT_LINE_CLASSES}\"/>\
              <line x1=\"{left}\" y1=\"{middle_y:.1}\" x2=\"{right:.1}\" y2=\"{middle_y:.1}\" stroke-dasharray=\"{QUADRANT_DASHES}\" class=\"{QUADRANT_LINE_CLASSES}\"/>\
              <text x=\"{:.1}\" y=\"{:.1}\" class=\"{QUADRANT_LABEL_CLASSES}\">{}</text>\
@@ -402,6 +459,10 @@ pub(crate) fn lines(
             middle_x - left,
             middle_y - top,
             right - middle_x,
+            bottom - middle_y,
+            right - middle_x,
+            middle_y - top,
+            middle_x - left,
             bottom - middle_y,
             left + QUADRANT_LABEL_INSET,
             top + QUADRANT_LABEL_DROP,
@@ -418,7 +479,7 @@ pub(crate) fn lines(
         ));
     }
 
-    let count = series.len();
+    let all_series = series;
     for (index, series) in series.iter().enumerate() {
         if series.points.is_empty() {
             continue;
@@ -432,10 +493,21 @@ pub(crate) fn lines(
         // hovers of their own. The rules below light the group and its legend
         // entry together. A scatter has no line, its marks stand alone.
         if shape == Shape::Bars {
-            let lane = BAR_GROUP_SHARE / count as f64;
-            let gap = lane * BAR_LANE_GAP;
             for point in &series.points {
-                let left = x_of(point.x - BAR_GROUP_SHARE / 2.0 + index as f64 * lane + gap);
+                // The series with a bar in this slot share it, in their order.
+                let sharing: Vec<usize> = all_series
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, other)| other.points.iter().any(|other| other.x == point.x))
+                    .map(|(other, _)| other)
+                    .collect();
+                let lane = BAR_GROUP_SHARE / sharing.len().max(1) as f64;
+                let gap = lane * BAR_LANE_GAP;
+                let rank = sharing
+                    .iter()
+                    .position(|other| *other == index)
+                    .unwrap_or_default();
+                let left = x_of(point.x - BAR_GROUP_SHARE / 2.0 + rank as f64 * lane + gap);
                 let top = y_of(point.y);
                 svg.push_str(&format!(
                     "<rect x=\"{left:.1}\" y=\"{top:.1}\" width=\"{:.1}\" height=\"{:.1}\" fill=\"{color}\" fill-opacity=\"{BAR_FILL_OPACITY}\" stroke=\"{color}\" stroke-width=\"{BAR_EDGE_WIDTH}\" class=\"{STROKE_CLASS}\"><title>{}</title></rect>",
@@ -567,6 +639,44 @@ mod tests {
 
         let axis = Axis::counted(2, 2);
         assert!(axis.min < 2.0 && axis.max > 2.0);
+    }
+
+    #[test]
+    fn a_label_too_wide_for_its_slot_breaks_at_its_last_dash() {
+        let series = [Series {
+            label: "a".to_string(),
+            hover: String::new(),
+            hue: 0,
+            face: String::new(),
+            points: (0..8)
+                .map(|slot| Point {
+                    x: slot as f64,
+                    y: 1.0,
+                    hover: "bar".to_string(),
+                })
+                .collect(),
+        }];
+        let horizontal = Axis {
+            min: -0.5,
+            max: 7.5,
+            ticks: (0..8)
+                .map(|slot| (slot as f64, "r2wars-parity-max".to_string()))
+                .collect(),
+            title: String::new(),
+            icons: Vec::new(),
+        };
+        let bars = super::lines(
+            &series,
+            &horizontal,
+            &Axis::values(1.0),
+            Shape::Bars,
+            None,
+            super::NARROW_WIDTH,
+            "nothing",
+        );
+
+        assert!(bars.contains(">r2wars-parity-</tspan>"));
+        assert!(bars.contains(">max</tspan>"));
     }
 
     #[test]

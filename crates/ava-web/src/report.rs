@@ -18,9 +18,14 @@ const MAIN_CLASSES: &str = "w-full px-6 py-6";
 const HEADING_CLASSES: &str = "text-lg font-semibold text-neutral-100";
 const HEADING_ROW_CLASSES: &str = "flex items-baseline gap-4";
 const SUBTITLE_CLASSES: &str = "text-xs text-neutral-500 mt-1";
-/// A chapter of the report: a heading over a rule, the tables and charts of the chapter under it.
-const CHAPTER_CLASSES: &str =
-    "text-base font-semibold text-neutral-100 mt-12 mb-4 pb-2 border-b border-neutral-800";
+/// The tabs of the report and the classes their rules are scoped by.
+const TABS_CLASS: &str = "report-tabs";
+const TAB_FIELD: &str = "tab";
+const TAB_ROW_CLASSES: &str = "flex gap-1.5 mt-10 mb-2 pb-2 border-b border-neutral-800";
+const TAB_CLASSES: &str = "block rounded-md px-3 py-1.5 text-sm text-neutral-400 cursor-pointer \
+                           hover:text-neutral-100 hover:bg-neutral-800/60 transition-colors \
+                           peer-checked:bg-neutral-800 peer-checked:text-neutral-100 \
+                           peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-indigo-500";
 const FILE_PREFIX: &str = "report";
 const FILE_SUFFIX: &str = ".html";
 const NAME_SEPARATOR: &str = "-";
@@ -546,12 +551,30 @@ pub(crate) fn page(names: &[String], linked: bool) -> std::io::Result<String> {
 
     let by_model = grouped(&played, model_key);
     let by_agent = grouped(&played, agent_key);
-    body.push_str(&winners(&by_model));
-    body.push_str(&chapter("tournaments"));
-    body.push_str(&tournaments_table(&records, &played));
-    body.push_str(&tournaments_chart(&records, &by_model, &played));
-    body.push_str(&pass_curve(&by_model));
-    body.push_str(&format!(
+    let mut tournaments = tournaments_table(&records, &played);
+    tournaments.push_str(&tournaments_chart(&records, &by_model, &played));
+    let mut efficiency = group_table(&by_model, MODELS_TABLE, &COLUMNS);
+    efficiency.push_str(&format!(
+        "<div class=\"{}\">{}{}</div>",
+        views::CHARTS_GRID_CLASSES,
+        efficiency_chart(
+            &by_model,
+            "cost efficiency",
+            "the dollars of every model's runs at the prices of the registry over the rounds it won, a draw counting half, the cheapest leftmost",
+            "dollars per round won",
+            Sum::dollars_per_round_won,
+            |dollars| format!("{} per round won", usage::money(dollars)),
+        ),
+        efficiency_chart(
+            &by_model,
+            "token efficiency",
+            "the tokens through the backend of every model's runs over the rounds it won, a draw counting half, in thousands, the leanest leftmost",
+            "thousand tokens per round won",
+            |sum| sum.tokens_per_round_won().map(|tokens| tokens / THOUSAND),
+            |thousands| format!("{thousands:.0}k tokens per round won"),
+        ),
+    ));
+    efficiency.push_str(&format!(
         "<div class=\"{}\">{}{}</div>",
         views::CHARTS_GRID_CLASSES,
         scatter(
@@ -569,9 +592,7 @@ pub(crate) fn page(names: &[String], linked: bool) -> std::io::Result<String> {
             |thousands| format!("{thousands:.0}k output tokens per run"),
         ),
     ));
-    body.push_str(&chapter("model statistics"));
-    body.push_str(&group_table(&by_model, MODELS_TABLE, &COLUMNS));
-    body.push_str(&format!(
+    efficiency.push_str(&format!(
         "<div class=\"{}\">{}{}</div>",
         views::CHARTS_GRID_CLASSES,
         scatter(
@@ -589,7 +610,12 @@ pub(crate) fn page(names: &[String], linked: bool) -> std::io::Result<String> {
             |millions| format!("{millions:.1}M tokens to the high score"),
         ),
     ));
-    body.push_str(&harness_chart(&by_agent));
+    efficiency.push_str(&pass_curve(&by_model));
+    body.push_str(&tabs(&[
+        ("tournaments", &tournaments),
+        ("efficiency", &efficiency),
+        ("harnesses", &harness_chart(&by_agent)),
+    ]));
 
     Ok(document(&body))
 }
@@ -649,54 +675,6 @@ fn note(text: &str) -> String {
         views::NOTE_CLASSES,
         views::escape(text)
     )
-}
-
-/// The tiles naming the model that won on score, on dollars per round won
-/// and on tokens per round won, each pooled over every harness that drove it.
-fn winners(models: &[Group]) -> String {
-    let best = |value: &dyn Fn(&Sum) -> Option<f64>, lowest: bool| {
-        let mut ranked: Vec<(f64, &Group)> = models
-            .iter()
-            .filter(|group| group.sum.rounds_won() > 0.0)
-            .filter_map(|group| Some((value(&group.sum)?, group)))
-            .collect();
-        ranked.sort_by(|left, right| left.0.total_cmp(&right.0));
-        let winner = if lowest {
-            ranked.first()
-        } else {
-            ranked.last()
-        };
-        winner.map(|(value, group)| (*value, views::escape(&group.setup.agent.model)))
-    };
-    let tile = |label: &str, winner: Option<(f64, String)>, detail: &dyn Fn(f64) -> String| {
-        let (value, model) = winner.unwrap_or_default();
-        views::tile(
-            label,
-            &model,
-            &if model.is_empty() {
-                String::new()
-            } else {
-                detail(value)
-            },
-            views::TILE_TEXT_CLASSES,
-        )
-    };
-
-    views::tiles(&[
-        tile("winner by score", best(&Sum::score, false), &|score| {
-            format!("score {score:.2}")
-        }),
-        tile(
-            "winner by cost",
-            best(&Sum::dollars_per_round_won, true),
-            &|dollars| format!("{} per round won", usage::money(dollars)),
-        ),
-        tile(
-            "winner by token efficiency",
-            best(&Sum::tokens_per_round_won, true),
-            &|tokens| format!("{} tokens per round won", tokens_label(tokens as u64)),
-        ),
-    ])
 }
 
 /// The score of every model under every harness that drove it: one slot per
@@ -847,11 +825,30 @@ fn variance_shares(
     )
 }
 
-/// The heading of a chapter.
-fn chapter(title: &str) -> String {
+/// `panes`, each a title and its content, as tabs: a row of the titles and
+/// the content of the chosen one under it, the first to begin with. The tabs
+/// are radio buttons, so the file needs no script to switch them.
+fn tabs(panes: &[(&str, &String)]) -> String {
+    let mut row = String::new();
+    let mut content = String::new();
+    let mut rules = String::new();
+    for (index, (title, pane)) in panes.iter().enumerate() {
+        let checked = if index == 0 { " checked" } else { "" };
+        row.push_str(&format!(
+            "<span><input type=\"radio\" name=\"{TAB_FIELD}\" id=\"{TAB_FIELD}-{index}\" class=\"peer sr-only\"{checked}>\
+             <label for=\"{TAB_FIELD}-{index}\" class=\"{TAB_CLASSES}\">{}</label></span>",
+            views::escape(title)
+        ));
+        content.push_str(&format!(
+            "<div class=\"{TAB_FIELD}-pane-{index}\">{pane}</div>"
+        ));
+        rules.push_str(&format!(
+            ".{TABS_CLASS}:not(:has(#{TAB_FIELD}-{index}:checked)) .{TAB_FIELD}-pane-{index}{{display:none}}"
+        ));
+    }
+
     format!(
-        "<h2 class=\"{CHAPTER_CLASSES}\">{}</h2>",
-        views::escape(title)
+        "<div class=\"{TABS_CLASS}\"><style>{rules}</style><div class=\"{TAB_ROW_CLASSES}\">{row}</div>{content}</div>"
     )
 }
 
@@ -1113,6 +1110,63 @@ fn tournaments_chart(
             chart::Shape::Bars,
             None,
             chart::WIDE_WIDTH,
+            NO_MODELS_NOTE,
+        ),
+    )
+}
+
+/// `value` of every model as one bar in a slot of its own, the smallest
+/// leftmost, for the models with a value.
+fn efficiency_chart(
+    models: &[Group],
+    title: &str,
+    tooltip: &str,
+    measure: &str,
+    value: impl Fn(&Sum) -> Option<f64>,
+    detail: impl Fn(f64) -> String,
+) -> String {
+    let mut ranked: Vec<(f64, &Group)> = models
+        .iter()
+        .filter_map(|model| Some((value(&model.sum)?, model)))
+        .collect();
+    ranked.sort_by(|left, right| left.0.total_cmp(&right.0));
+    let top = ranked.last().map_or(0.0, |(value, _)| *value);
+
+    let series: Vec<chart::Series> = ranked
+        .iter()
+        .enumerate()
+        .map(|(slot, (value, model))| {
+            let mut series = group_series(model);
+            series.points.push(chart::Point {
+                x: slot as f64,
+                y: *value,
+                hover: format!("{}, {}", model.setup.agent.model, detail(*value)),
+            });
+            series
+        })
+        .collect();
+    let horizontal = chart::Axis {
+        min: -SLOT_MARGIN,
+        max: ranked.len() as f64 - 1.0 + SLOT_MARGIN,
+        ticks: ranked
+            .iter()
+            .enumerate()
+            .map(|(slot, (_, model))| (slot as f64, model.setup.agent.model.clone()))
+            .collect(),
+        title: String::new(),
+        icons: Vec::new(),
+    };
+
+    views::chart_panel(
+        title,
+        tooltip,
+        &chart::lines(
+            &series,
+            &horizontal,
+            &chart::Axis::values(top).titled(measure),
+            chart::Shape::Bars,
+            None,
+            chart::NARROW_WIDTH,
             NO_MODELS_NOTE,
         ),
     )
