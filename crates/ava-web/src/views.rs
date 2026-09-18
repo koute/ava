@@ -244,6 +244,8 @@ const TEXT_SORT: &str = "text";
 const TOOLTIP_CLASSES: &str = "cursor-help underline decoration-dotted decoration-neutral-700 \
      underline-offset-4 hover:text-neutral-300 hover:decoration-neutral-500 transition-colors";
 const CELL_CLASSES: &str = "py-2.5 border-t border-neutral-800 align-middle";
+/// A faint line between the columns of a table, none before the first.
+const COLUMN_SEPARATOR_CLASSES: &str = "border-l border-neutral-800/60 first:border-l-0";
 const ROW_CLASSES: &str = "hover:bg-neutral-800/40 transition-colors";
 
 const NUMERIC_CLASSES: &str = "text-right font-mono tabular-nums";
@@ -5335,7 +5337,7 @@ fn render_table(
             None => ("", String::new(), String::new()),
         };
         html.push_str(&format!(
-            "<th class=\"{classes} {HEADER_CLASSES} {align} {sortable_classes}\"{width}{sort}>{}{arrow}</th>",
+            "<th class=\"{classes} {HEADER_CLASSES} {COLUMN_SEPARATOR_CLASSES} {align} {sortable_classes}\"{width}{sort}>{}{arrow}</th>",
             explained(title, tooltip)
         ));
     }
@@ -5354,7 +5356,7 @@ fn render_table(
         for (index, (cell, align)) in row.iter().zip(&alignment).enumerate() {
             let classes = column(index);
             html.push_str(&format!(
-                "<td class=\"{classes} {CELL_CLASSES} {align}\">{cell}</td>"
+                "<td class=\"{classes} {CELL_CLASSES} {COLUMN_SEPARATOR_CLASSES} {align}\">{cell}</td>"
             ));
         }
         html.push_str("</tr>");

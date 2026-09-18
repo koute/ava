@@ -28,7 +28,6 @@ const NO_MODELS_NOTE: &str = "no run in a finished round";
 const PERCENT: f64 = 100.0;
 const THOUSAND: f64 = 1_000.0;
 const MILLION: f64 = 1_000_000.0;
-const SECONDS_PER_MINUTE: f64 = 60.0;
 /// Where an agent without a score or a price sorts: after every other.
 const UNSCORED: f64 = -1.0;
 const UNPRICED: f64 = f64::INFINITY;
@@ -56,130 +55,58 @@ const TOKEN_FIELDS: [&str; 4] = [
     "cache_read_tokens",
     "cache_write_tokens",
 ];
-const MATRIX_TABLE: &str = "report-matrix";
-const SPREAD_HEADER: &str = "#spread|the score of the best harness with the model minus that of the worst, how much the harness moves the outcome";
-const POOLED_HEADER: &str =
-    "#all harnesses|the share of the rounds won over every harness that drove the model";
-/// The row pooling every model, showing what every harness did over all of them.
-const EVERY_MODEL: &str = "every model";
-const NO_MATRIX_NOTE: &str = "no model with a round against another agent";
-/// The names the script keeps the chosen sort of the two tables under.
-const COST_TABLE: &str = "report-cost";
-const TIME_TABLE: &str = "report-time";
-
-/// The columns of the table over what the agents got for their dollars and
-/// tokens.
-const COST_COLUMNS: [Column; 12] = [
-    Column::Runs,
-    Column::Passed,
-    Column::Rounds,
-    Column::Score,
-    Column::Dollars,
-    Column::DollarsPerRun,
-    Column::DollarsPerPass,
-    Column::DollarsPerRoundWon,
-    Column::Output,
-    Column::OutputPerRoundWon,
-    Column::Input,
-    Column::CacheRead,
-];
-/// The columns of the table over how the agents spent their seconds.
-const TIME_COLUMNS: [Column; 12] = [
-    Column::FirstPassSeconds,
+const NO_HARNESSES_NOTE: &str = "no model with a round against another agent";
+/// The room a model gets on either side of its slot on the harness chart.
+const SLOT_MARGIN: f64 = 0.5;
+/// The names the script keeps the chosen sorts of the tables under.
+const MODELS_TABLE: &str = "report-models";
+const TOURNAMENTS_TABLE: &str = "report-tournaments";
+const OVERALL_HEADER: &str = "#overall|the share of the rounds against other agents won over every chosen tournament, half for a draw";
+const COST_PER_SUCCESS_HEADER: &str = "#cost per success|the dollars of its runs at the prices of the registry over the runs a push of which passed the verifier";
+const TOKENS_PER_SUCCESS_HEADER: &str = "#tokens per success|the tokens through the backend over the runs a push of which passed the verifier";
+/// The column of the tournaments table holding the overall score.
+const OVERALL_COLUMN: usize = 1;
+/// The columns of the table, after the model.
+const COLUMNS: [Column; 6] = [
+    Column::FirstPass,
     Column::FirstPassTokens,
-    Column::HighScoreSeconds,
+    Column::HighScore,
     Column::HighScoreTokens,
-    Column::BudgetUsed,
-    Column::Waiting,
-    Column::FirstToken,
-    Column::Burn,
-    Column::Requests,
-    Column::PeakContext,
-    Column::Compactions,
-    Column::Failed,
+    Column::Score,
+    Column::CostPerScore,
 ];
-/// One measure of a group of runs, a column of the tables.
+/// One measure of a model, a column of the table.
 #[derive(Clone, Copy)]
 enum Column {
-    Runs,
-    Passed,
-    Rounds,
-    Score,
-    Dollars,
-    DollarsPerRun,
-    DollarsPerPass,
-    DollarsPerRoundWon,
-    Output,
-    OutputPerRoundWon,
-    Input,
-    CacheRead,
-    FirstPassSeconds,
+    FirstPass,
     FirstPassTokens,
-    HighScoreSeconds,
+    HighScore,
     HighScoreTokens,
-    BudgetUsed,
-    Waiting,
-    FirstToken,
-    Burn,
-    Requests,
-    PeakContext,
-    Compactions,
-    Failed,
+    Score,
+    CostPerScore,
 }
 
 impl Column {
     /// The header of the column, with its explanation behind the hover.
     fn header(self) -> &'static str {
         match self {
-            Self::Runs => "#runs|the runs it played in the finished rounds",
-            Self::Passed => "#passed|the runs a push of which passed the verifier",
-            Self::Rounds => "#rounds|the rounds against other agents as won-drawn-lost",
-            Self::Score => "#score|the share of those rounds won, half for a draw",
-            Self::Dollars => "#$|the dollars of its runs at the prices of the registry",
-            Self::DollarsPerRun => {
-                "#$ per run|those dollars over the runs with a price, the runs without one behind the hover"
-            }
-            Self::DollarsPerPass => "#$ per pass|those dollars over the runs that passed",
-            Self::DollarsPerRoundWon => {
-                "#$ per round won|those dollars over the rounds it won, a draw counting half"
-            }
-            Self::Output => "#output|the output tokens of its runs",
-            Self::OutputPerRoundWon => {
-                "#output per round won|the output tokens over the rounds it won, a draw counting half"
-            }
-            Self::Input => "#input|the input tokens not read from the cache",
-            Self::CacheRead => "#cache read|the input tokens read from the cache",
-            Self::FirstPassSeconds => {
-                "#first pass|the median second of the scoring clock at which the first push passed, over the runs that passed"
+            Self::FirstPass => {
+                "#mean time to first pass|the mean second of the scoring clock at which the first push passed, over the runs that passed"
             }
             Self::FirstPassTokens => {
-                "#tokens to first pass|the median tokens through the backend until that push, input, cache and output alike"
+                "#mean tokens to first pass|the mean tokens through the backend until that push, input, cache and output alike"
             }
-            Self::HighScoreSeconds => {
-                "#high score|the median second at which the entry of record was pushed, the best entry of the run, over the runs that kept one"
+            Self::HighScore => {
+                "#mean time to high score|the mean second at which the entry of record was pushed, the best entry of the run, over the runs that kept one"
             }
             Self::HighScoreTokens => {
-                "#tokens to high score|the median tokens through the backend until that push"
+                "#mean tokens to high score|the mean tokens through the backend until that push"
             }
-            Self::BudgetUsed => {
-                "#budget used|the seconds of its runs over the seconds they were given"
+            Self::Score => {
+                "#score|the share of the rounds against other agents won, half for a draw"
             }
-            Self::Waiting => {
-                "#waiting|the seconds its runs spent inside requests to the backend over their seconds, above the whole when requests overlapped"
-            }
-            Self::FirstToken => {
-                "#first token|the mean seconds to the first generated token, over the runs reporting one"
-            }
-            Self::Burn => {
-                "#burn|the tokens through the backend a minute, input, cache and output alike"
-            }
-            Self::Requests => "#requests|the requests to the backend a minute",
-            Self::PeakContext => {
-                "#peak context|the largest share of the window a run of it reached"
-            }
-            Self::Compactions => "#compactions|the compactions its harness reported",
-            Self::Failed => {
-                "#failed|the model calls answered with an error, the ones cut short upstream and the ones abandoned behind the hover"
+            Self::CostPerScore => {
+                "#mean cost per score|the dollars of its runs at the prices of the registry over the rounds it won, a draw counting half"
             }
         }
     }
@@ -187,82 +114,30 @@ impl Column {
     /// The cell of the column for `sum`.
     fn cell(self, sum: &Sum) -> String {
         match self {
-            Self::Runs => sum.runs.to_string(),
-            Self::Passed => sum.passed.to_string(),
-            Self::Rounds => views::tally_label(&sum.rounds),
+            Self::FirstPass => seconds_label(mean(&sum.first_pass_seconds)),
+            Self::FirstPassTokens => count_label(mean(&sum.first_pass_tokens)),
+            Self::HighScore => seconds_label(mean(&sum.high_score_seconds)),
+            Self::HighScoreTokens => count_label(mean(&sum.high_score_tokens)),
             Self::Score => sum
                 .score()
                 .map(|score| format!("{score:.2}"))
                 .unwrap_or_default(),
-            Self::Dollars => {
-                if sum.priced > 0 {
-                    usage::money(sum.dollars)
-                } else {
-                    String::new()
-                }
-            }
-            Self::DollarsPerRun => match sum.dollars_per_run() {
-                Some(dollars) if sum.unpriced() > 0 => titled(
-                    &usage::money(dollars),
-                    &format!("{} runs without a price", sum.unpriced()),
-                ),
-                Some(dollars) => usage::money(dollars),
-                None => String::new(),
-            },
-            Self::DollarsPerPass => sum.dollars_per_pass().map(usage::money).unwrap_or_default(),
-            Self::DollarsPerRoundWon => sum
+            Self::CostPerScore => sum
                 .dollars_per_round_won()
                 .map(usage::money)
                 .unwrap_or_default(),
-            Self::Output => tokens_label(sum.output_tokens),
-            Self::OutputPerRoundWon => sum
-                .output_per_round_won()
-                .map(|tokens| tokens_label(tokens as u64))
-                .unwrap_or_default(),
-            Self::Input => tokens_label(sum.input_tokens),
-            Self::CacheRead => tokens_label(sum.cache_read_tokens),
-            Self::FirstPassSeconds => seconds_label(median(&sum.first_pass_seconds)),
-            Self::FirstPassTokens => count_label(median(&sum.first_pass_tokens)),
-            Self::HighScoreSeconds => seconds_label(median(&sum.high_score_seconds)),
-            Self::HighScoreTokens => count_label(median(&sum.high_score_tokens)),
-            Self::BudgetUsed => percent_label(sum.budget_used()),
-            Self::Waiting => percent_label(sum.waiting()),
-            Self::FirstToken => sum
-                .first_token()
-                .map(|seconds| format!("{seconds:.1}s"))
-                .unwrap_or_default(),
-            Self::Burn => sum
-                .burn()
-                .map(|tokens| tokens_label(tokens as u64))
-                .unwrap_or_default(),
-            Self::Requests => sum
-                .requests_per_minute()
-                .map(|requests| format!("{requests:.1}"))
-                .unwrap_or_default(),
-            Self::PeakContext => percent_label(sum.peak_share),
-            Self::Compactions => sum.compactions.to_string(),
-            Self::Failed => titled(
-                &sum.failed_requests.to_string(),
-                &format!(
-                    "{} cut short, {} abandoned",
-                    sum.truncated_requests, sum.aborted_requests
-                ),
-            ),
         }
     }
 }
 
 /// One run of a seat in a finished round: what it spent and what came of it.
 struct Played {
+    /// The tournament, by its place among the chosen ones.
+    tournament: usize,
     setup: ava_wire::Setup,
     limit_seconds: u64,
-    wall_seconds: u64,
     cost: Option<f64>,
     metrics: Option<ava_wire::Metrics>,
-    /// The largest context a request carried, as a share of the window.
-    peak_share: Option<f64>,
-    compactions: u64,
-    passed: bool,
     /// The second of the first push that passed, on the scoring clock, and
     /// the tokens through the backend until then.
     first_pass: Option<u64>,
@@ -278,6 +153,7 @@ struct Played {
 
 /// Every run played in the finished rounds of `record`.
 fn played_runs(
+    tournament: usize,
     record: &ava_wire::Tournament,
     registry: &registry::Registry,
 ) -> std::io::Result<Vec<Played>> {
@@ -316,11 +192,6 @@ fn played_runs(
                 .metrics
                 .as_ref()
                 .and_then(|metrics| registry.cost(&run.setup(), metrics));
-            let peak_share = run.metrics.as_ref().and_then(|metrics| {
-                let window = f64::from(run.context_window.unwrap_or_default());
-                (metrics.peak_context_tokens > 0 && window > 0.0)
-                    .then(|| metrics.peak_context_tokens as f64 / window)
-            });
             let requests = requests(&directory);
             let first_pass = run
                 .attempts
@@ -334,13 +205,10 @@ fn played_runs(
                     .find(|(_, attempt)| attempt.seconds == seconds)
             });
             played.push(Played {
+                tournament,
                 setup: setup.clone(),
                 limit_seconds: run.limit_seconds,
-                wall_seconds: run.wall_seconds().unwrap_or_default(),
                 cost,
-                peak_share,
-                compactions: run.compactions.unwrap_or_default(),
-                passed: run.passed(),
                 first_pass: first_pass.map(|(_, attempt)| attempt.seconds),
                 first_pass_tokens: first_pass.and_then(|(index, attempt)| {
                     tokens_until(&requests, &run, index, attempt.seconds)
@@ -448,6 +316,7 @@ fn add_tally(tally: &mut ava_wire::Tally, view: ava_wire::Tally) {
 #[derive(Default)]
 struct Sum {
     runs: u64,
+    /// The runs a push of which passed the verifier.
     passed: u64,
     rounds: ava_wire::Tally,
     /// The dollars of the runs with a price, and how many had one.
@@ -457,19 +326,6 @@ struct Sum {
     output_tokens: u64,
     cache_read_tokens: u64,
     cache_write_tokens: u64,
-    requests: u64,
-    failed_requests: u64,
-    truncated_requests: u64,
-    aborted_requests: u64,
-    request_seconds: f64,
-    /// The mean seconds to the first token summed over the runs reporting
-    /// one, and how many did.
-    first_token_seconds: f64,
-    first_token_runs: u64,
-    wall_seconds: u64,
-    limit_seconds: u64,
-    peak_share: Option<f64>,
-    compactions: u64,
     /// The share of its budget every run that passed had spent at its first
     /// pass, the second of that pass and the tokens until it.
     first_pass_shares: Vec<f64>,
@@ -484,7 +340,7 @@ struct Sum {
 impl Sum {
     fn add(&mut self, played: &Played) {
         self.runs += 1;
-        self.passed += u64::from(played.passed);
+        self.passed += u64::from(played.first_pass.is_some());
         add_tally(&mut self.rounds, played.rounds);
         if let Some(cost) = played.cost {
             self.dollars += cost;
@@ -495,22 +351,7 @@ impl Sum {
             self.output_tokens += metrics.output_tokens;
             self.cache_read_tokens += metrics.cache_read_tokens;
             self.cache_write_tokens += metrics.cache_write_tokens;
-            self.requests += metrics.requests;
-            self.failed_requests += metrics.failed_requests;
-            self.truncated_requests += metrics.truncated_requests;
-            self.aborted_requests += metrics.aborted_requests;
-            self.request_seconds += metrics.request_seconds;
-            if metrics.mean_first_token_seconds > 0.0 {
-                self.first_token_seconds += metrics.mean_first_token_seconds;
-                self.first_token_runs += 1;
-            }
         }
-        self.wall_seconds += played.wall_seconds;
-        self.limit_seconds += played.limit_seconds;
-        if let Some(share) = played.peak_share {
-            self.peak_share = Some(self.peak_share.unwrap_or_default().max(share));
-        }
-        self.compactions += played.compactions;
         if let Some(seconds) = played.first_pass {
             self.first_pass_shares
                 .extend(budget_share(seconds, played.limit_seconds));
@@ -522,10 +363,6 @@ impl Sum {
             .extend(played.high_score.map(|seconds| seconds as f64));
         self.high_score_tokens
             .extend(played.high_score_tokens.map(|tokens| tokens as f64));
-    }
-
-    fn unpriced(&self) -> u64 {
-        self.runs - self.priced
     }
 
     /// The rounds won, a draw counting half.
@@ -541,28 +378,18 @@ impl Sum {
         ratio(self.dollars, self.priced as f64).filter(|_| self.priced > 0)
     }
 
-    fn dollars_per_pass(&self) -> Option<f64> {
-        ratio(self.dollars, self.passed as f64).filter(|_| self.priced > 0)
-    }
-
     fn dollars_per_round_won(&self) -> Option<f64> {
         ratio(self.dollars, self.rounds_won()).filter(|_| self.priced > 0)
     }
 
-    fn output_per_round_won(&self) -> Option<f64> {
-        ratio(self.output_tokens as f64, self.rounds_won())
+    /// The dollars over the runs that passed, nothing without a priced run.
+    fn dollars_per_pass(&self) -> Option<f64> {
+        ratio(self.dollars, self.passed as f64).filter(|_| self.priced > 0)
     }
 
-    fn budget_used(&self) -> Option<f64> {
-        ratio(self.wall_seconds as f64, self.limit_seconds as f64)
-    }
-
-    fn waiting(&self) -> Option<f64> {
-        ratio(self.request_seconds, self.wall_seconds as f64)
-    }
-
-    fn first_token(&self) -> Option<f64> {
-        ratio(self.first_token_seconds, self.first_token_runs as f64)
+    /// The tokens through the backend over the runs that passed.
+    fn tokens_per_pass(&self) -> Option<f64> {
+        ratio(self.tokens() as f64, self.passed as f64)
     }
 
     /// The tokens through the backend over the rounds it won, a draw counting half.
@@ -572,18 +399,6 @@ impl Sum {
 
     fn tokens(&self) -> u64 {
         self.input_tokens + self.output_tokens + self.cache_read_tokens + self.cache_write_tokens
-    }
-
-    fn minutes(&self) -> f64 {
-        self.wall_seconds as f64 / SECONDS_PER_MINUTE
-    }
-
-    fn burn(&self) -> Option<f64> {
-        ratio(self.tokens() as f64, self.minutes())
-    }
-
-    fn requests_per_minute(&self) -> Option<f64> {
-        ratio(self.requests as f64, self.minutes())
     }
 
     /// The output tokens one run generated, in thousands.
@@ -669,8 +484,8 @@ pub(crate) fn page(names: &[String], linked: bool) -> std::io::Result<String> {
     }
 
     let mut played = Vec::new();
-    for record in &records {
-        played.extend(played_runs(record, &registry)?);
+    for (index, record) in records.iter().enumerate() {
+        played.extend(played_runs(index, record, &registry)?);
     }
     if played.is_empty() {
         body.push_str(&note(NO_ROUNDS_NOTE));
@@ -679,8 +494,8 @@ pub(crate) fn page(names: &[String], linked: bool) -> std::io::Result<String> {
 
     let by_model = grouped(&played, model_key);
     let by_agent = grouped(&played, agent_key);
-    body.push_str(&summary(&records, &played));
     body.push_str(&winners(&by_model));
+    body.push_str(&tournaments_table(&records, &played));
     body.push_str(&pass_curve(&by_model));
     body.push_str(&format!(
         "<div class=\"{}\">{}{}</div>",
@@ -703,16 +518,11 @@ pub(crate) fn page(names: &[String], linked: bool) -> std::io::Result<String> {
         ),
     ));
     body.push_str(&section(
-        "cost",
-        "what every model got for its dollars and tokens, over every harness that drove it and the finished rounds of the chosen tournaments",
-        &group_table(&by_model, COST_TABLE, &COST_COLUMNS),
+        "models",
+        "every model over every harness that drove it and the finished rounds of the chosen tournaments",
+        &group_table(&by_model, MODELS_TABLE, &COLUMNS),
     ));
-    body.push_str(&section(
-        "time",
-        "how every model spent its seconds",
-        &group_table(&by_model, TIME_TABLE, &TIME_COLUMNS),
-    ));
-    body.push_str(&matrix(&by_agent));
+    body.push_str(&harness_chart(&by_agent));
 
     Ok(document(&body))
 }
@@ -774,28 +584,6 @@ fn note(text: &str) -> String {
     )
 }
 
-/// The tiles over everything the report spans.
-fn summary(records: &[ava_wire::Tournament], played: &[Played]) -> String {
-    let mut total = Sum::default();
-    for run in played {
-        total.add(run);
-    }
-    let rounds: usize = records
-        .iter()
-        .map(|record| record.finished_rounds().count())
-        .sum();
-    let tile = |label: &str, value: &str| views::tile(label, value, "", views::TILE_VALUE_CLASSES);
-
-    views::tiles(&[
-        tile("tournaments", &records.len().to_string()),
-        tile("finished rounds", &rounds.to_string()),
-        tile("runs", &total.runs.to_string()),
-        tile("dollars", &usage::money(total.dollars)),
-        tile("tokens", &tokens_label(total.tokens())),
-        tile("run time", &usage::span(total.wall_seconds)),
-    ])
-}
-
 /// The tiles naming the model that won on score, on dollars per round won
 /// and on tokens per round won, each pooled over every harness that drove it.
 fn winners(models: &[Group]) -> String {
@@ -844,11 +632,10 @@ fn winners(models: &[Group]) -> String {
     ])
 }
 
-/// The score of every model under every harness, one row per model and one
-/// column per harness, with how far the harnesses spread it and what the
-/// model did over all of them, then one row over every model, and how the
-/// variance of the agents' scores splits between models and harnesses.
-fn matrix(agents: &[Group]) -> String {
+/// The score of every model under every harness that drove it: one slot per
+/// model, one mark per harness in it, and under the chart how the variance of
+/// the agents' scores splits between models and harnesses.
+fn harness_chart(agents: &[Group]) -> String {
     let scored: Vec<&Group> = agents
         .iter()
         .filter(|group| group.sum.score().is_some())
@@ -859,67 +646,61 @@ fn matrix(agents: &[Group]) -> String {
         .collect();
     harnesses.sort();
     harnesses.dedup();
-    let mut models: Vec<String> = scored
-        .iter()
-        .map(|group| group.setup.agent.model.clone())
-        .collect();
-    models.sort();
-    models.dedup();
-
-    let mut headers: Vec<String> = vec![MODEL_HEADER.to_string()];
-    headers.extend(harnesses.iter().map(|harness| {
-        format!(
-            "#{harness}|the share of the rounds won by {harness} driving the model, half for a draw"
-        )
-    }));
-    headers.push(SPREAD_HEADER.to_string());
-    headers.push(POOLED_HEADER.to_string());
-    let headers: Vec<&str> = headers.iter().map(String::as_str).collect();
-
-    // A row is a model over the harnesses, or every model over them: the
-    // score of the pooled rounds in every cell, the spread of the cells.
-    let row = |name: &str, member: &dyn Fn(&Group) -> bool| {
-        let mut cells = vec![model_cell(name)];
-        let mut column_scores: Vec<f64> = Vec::new();
-        let mut pooled = ava_wire::Tally::default();
-        for harness in &harnesses {
-            let mut rounds = ava_wire::Tally::default();
-            for group in scored
-                .iter()
-                .filter(|group| member(group) && group.setup.agent.harness == *harness)
-            {
-                add_tally(&mut rounds, group.sum.rounds);
-                add_tally(&mut pooled, group.sum.rounds);
-            }
-            let score = rounds.score();
-            column_scores.extend(score);
-            cells.push(score.map(|score| format!("{score:.2}")).unwrap_or_default());
+    let mut models: Vec<(f64, String)> = Vec::new();
+    for group in &scored {
+        let model = &group.setup.agent.model;
+        if models.iter().any(|(_, known)| known == model) {
+            continue;
         }
-        let spread = if column_scores.len() > 1 {
-            let low = column_scores.iter().copied().fold(f64::INFINITY, f64::min);
-            let high = column_scores
-                .iter()
-                .copied()
-                .fold(f64::NEG_INFINITY, f64::max);
-            format!("{:.2}", high - low)
-        } else {
-            String::new()
-        };
-        cells.push(spread);
-        cells.push(
-            pooled
-                .score()
-                .map(|score| format!("{score:.2}"))
-                .unwrap_or_default(),
-        );
-        (pooled.score().unwrap_or_default(), cells)
-    };
-    let mut rows: Vec<(f64, Vec<String>)> = models
+        let mut rounds = ava_wire::Tally::default();
+        for peer in scored
+            .iter()
+            .filter(|peer| peer.setup.agent.model == *model)
+        {
+            add_tally(&mut rounds, peer.sum.rounds);
+        }
+        models.push((rounds.score().unwrap_or_default(), model.clone()));
+    }
+    // The best model stands leftmost.
+    models.sort_by(|left, right| right.0.total_cmp(&left.0));
+    let slot = |model: &str| models.iter().position(|(_, known)| known == model);
+
+    let series: Vec<chart::Series> = harnesses
         .iter()
-        .map(|model| row(model, &|group: &Group| group.setup.agent.model == *model))
+        .map(|harness| chart::Series {
+            label: harness.clone(),
+            hover: harness.clone(),
+            hue: harnesses
+                .iter()
+                .position(|known| known == harness)
+                .unwrap_or_default() as u64
+                * HUES
+                / harnesses.len() as u64,
+            face: String::new(),
+            points: scored
+                .iter()
+                .filter(|group| group.setup.agent.harness == *harness)
+                .filter_map(|group| {
+                    let score = group.sum.score()?;
+                    Some(chart::Point {
+                        x: slot(&group.setup.agent.model)? as f64,
+                        y: score * PERCENT,
+                        hover: format!("{}, score {score:.2}", group.setup.agent.label()),
+                    })
+                })
+                .collect(),
+        })
         .collect();
-    rows.sort_by(|left, right| right.0.total_cmp(&left.0));
-    rows.push(row(EVERY_MODEL, &|_| true));
+    let horizontal = chart::Axis {
+        min: -SLOT_MARGIN,
+        max: models.len() as f64 - 1.0 + SLOT_MARGIN,
+        ticks: models
+            .iter()
+            .enumerate()
+            .map(|(index, (_, model))| (index as f64, model.clone()))
+            .collect(),
+        title: String::new(),
+    };
 
     let model = |group: &Group| group.setup.agent.model.clone();
     let harness = |group: &Group| group.setup.agent.harness.clone();
@@ -927,16 +708,17 @@ fn matrix(agents: &[Group]) -> String {
 
     format!(
         "{}<p class=\"{} mt-3\">{}</p>",
-        section(
+        views::chart_panel(
             "models and harnesses",
-            "the score of every model under every harness that drove it, over the finished rounds of the chosen tournaments",
-            &views::sorted_table(
-                MATRIX_TABLE,
-                Some(headers.len() - 1),
-                &headers,
-                rows.into_iter().map(|(_, cells)| cells).collect(),
-                Some(NO_MATRIX_NOTE),
-            )
+            "the score of every model under every harness that drove it, one mark per harness in the slot of the model, the best model leftmost",
+            &chart::lines(
+                &series,
+                &horizontal,
+                &chart::Axis::percent().titled("share of the rounds won"),
+                chart::Shape::Scatter,
+                chart::WIDE_WIDTH,
+                NO_HARNESSES_NOTE,
+            ),
         ),
         views::NOTE_CLASSES,
         views::explained(
@@ -1142,6 +924,65 @@ fn scatter(
     )
 }
 
+/// One row per model: its score over every chosen tournament, then in each
+/// of them, then what a run that passed cost it in dollars and in tokens.
+fn tournaments_table(records: &[ava_wire::Tournament], played: &[Played]) -> String {
+    let mut headers: Vec<String> = vec![MODEL_HEADER.to_string(), OVERALL_HEADER.to_string()];
+    headers.extend(records.iter().map(|record| {
+        format!(
+            "#{}|the share of the rounds against other agents won in {}, half for a draw",
+            record.name, record.name
+        )
+    }));
+    headers.push(COST_PER_SUCCESS_HEADER.to_string());
+    headers.push(TOKENS_PER_SUCCESS_HEADER.to_string());
+    let headers: Vec<&str> = headers.iter().map(String::as_str).collect();
+
+    let score_cell = |group: Option<&Group>| {
+        group
+            .and_then(|group| group.sum.score())
+            .map(|score| format!("{score:.2}"))
+            .unwrap_or_default()
+    };
+    let rows = grouped(played, model_key)
+        .iter()
+        .map(|model| {
+            let name = &model.setup.agent.model;
+            let mut row = vec![model_cell(name), score_cell(Some(model))];
+            for index in 0..records.len() {
+                let own = grouped(
+                    played
+                        .iter()
+                        .filter(|run| run.tournament == index && run.setup.agent.model == *name),
+                    model_key,
+                );
+                row.push(score_cell(own.first()));
+            }
+            row.push(
+                model
+                    .sum
+                    .dollars_per_pass()
+                    .map(usage::money)
+                    .unwrap_or_default(),
+            );
+            row.push(count_label(model.sum.tokens_per_pass()));
+            row
+        })
+        .collect();
+
+    section(
+        "tournaments",
+        "what every model did in every chosen tournament",
+        &views::sorted_table(
+            TOURNAMENTS_TABLE,
+            Some(OVERALL_COLUMN),
+            &headers,
+            rows,
+            Some(NO_MODELS_NOTE),
+        ),
+    )
+}
+
 /// The whole document around `body`: the head of the layout with the styles
 /// and the fonts inside it in place of their addresses, and the script
 /// sorting the tables, so nothing is fetched from the server.
@@ -1204,19 +1045,9 @@ fn tokens_label(count: u64) -> String {
     titled(&compact, &count.to_string())
 }
 
-/// The middle of `values`, the mean of the two middle ones of an even count.
-fn median(values: &[f64]) -> Option<f64> {
-    if values.is_empty() {
-        return None;
-    }
-    let mut sorted = values.to_vec();
-    sorted.sort_by(f64::total_cmp);
-    let middle = sorted.len() / 2;
-    if sorted.len() % 2 == 1 {
-        return Some(sorted[middle]);
-    }
-
-    Some((sorted[middle - 1] + sorted[middle]) / 2.0)
+/// The mean of `values`, nothing over none.
+fn mean(values: &[f64]) -> Option<f64> {
+    ratio(values.iter().sum(), values.len() as f64)
 }
 
 /// `bytes` in base64, for a font inside a stylesheet.
@@ -1246,6 +1077,7 @@ mod tests {
 
     fn played(passed: Option<u64>, cost: Option<f64>, won: u64, lost: u64) -> Played {
         Played {
+            tournament: 0,
             setup: ava_wire::Setup {
                 agent: ava_wire::Agent {
                     harness: "pi".to_string(),
@@ -1256,16 +1088,12 @@ mod tests {
                 name: None,
             },
             limit_seconds: 1000,
-            wall_seconds: 900,
             cost,
             metrics: Some(ava_wire::Metrics {
                 output_tokens: 3000,
                 request_seconds: 450.0,
                 ..ava_wire::Metrics::default()
             }),
-            peak_share: Some(0.4),
-            compactions: 0,
-            passed: passed.is_some(),
             first_pass: passed,
             first_pass_tokens: passed.map(|_| 1000),
             high_score: passed,
@@ -1287,19 +1115,16 @@ mod tests {
 
         assert_eq!(sum.runs, 3);
         assert_eq!(sum.passed, 2);
-        assert_eq!(sum.unpriced(), 1);
+        assert_eq!(sum.dollars_per_pass(), Some(3.0));
+        assert_eq!(sum.tokens_per_pass(), Some(4500.0));
         assert_eq!(sum.score(), Some(4.0 / 12.0));
         assert_eq!(sum.dollars_per_run(), Some(3.0));
-        assert_eq!(sum.dollars_per_pass(), Some(3.0));
         assert_eq!(sum.dollars_per_round_won(), Some(1.5));
-        assert_eq!(sum.output_per_round_won(), Some(2250.0));
-        assert_eq!(super::median(&sum.first_pass_shares), Some(0.5));
-        assert_eq!(super::median(&sum.first_pass_seconds), Some(500.0));
-        assert_eq!(super::median(&sum.high_score_tokens), Some(1000.0));
+        assert_eq!(super::mean(&sum.first_pass_shares), Some(0.5));
+        assert_eq!(super::mean(&sum.first_pass_seconds), Some(500.0));
+        assert_eq!(super::mean(&sum.high_score_tokens), Some(1000.0));
         assert_eq!(sum.tokens_per_round_won(), Some(2250.0));
-        assert_eq!(sum.waiting(), Some(0.5));
-        assert_eq!(sum.budget_used(), Some(0.9));
-        assert_eq!(sum.peak_share, Some(0.4));
+        assert_eq!(sum.thousand_output_per_run(), Some(3.0));
     }
 
     #[test]
@@ -1323,9 +1148,8 @@ mod tests {
         assert!(super::tokens_label(27_449_604).contains(">27.4M<"));
         assert_eq!(super::percent_label(Some(0.4251)), "43%");
         assert_eq!(super::percent_label(None), "");
-        assert_eq!(super::median(&[3.0, 1.0, 2.0]), Some(2.0));
-        assert_eq!(super::median(&[1.0, 2.0, 3.0, 4.0]), Some(2.5));
-        assert_eq!(super::median(&[]), None);
+        assert_eq!(super::mean(&[3.0, 1.0, 2.0]), Some(2.0));
+        assert_eq!(super::mean(&[]), None);
         assert_eq!(
             super::file_name(&["a".to_string(), "b".to_string()]),
             "report-a-b.html"
