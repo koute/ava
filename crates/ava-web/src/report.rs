@@ -24,7 +24,7 @@ const NAME_SEPARATOR: &str = "-";
 const DOWNLOAD_LABEL: &str = "download";
 const NO_TOURNAMENTS_NOTE: &str = "no tournament chosen, check some on the tournaments page";
 const NO_ROUNDS_NOTE: &str = "no finished round in the chosen tournaments";
-const NO_AGENTS_NOTE: &str = "no run in a finished round";
+const NO_MODELS_NOTE: &str = "no run in a finished round";
 const PERCENT: f64 = 100.0;
 const THOUSAND: f64 = 1_000.0;
 const MILLION: f64 = 1_000_000.0;
@@ -39,9 +39,30 @@ const BASE64_BLOCK_BYTES: usize = 3;
 const BASE64_BLOCK_CHARACTERS: usize = 4;
 const BASE64_BITS: u32 = 6;
 
-const AGENT_HEADER: &str = "*agent";
-/// The cells in front of the columns of a row: the avatar and the name.
-const AGENT_CELLS: usize = 2;
+const MODEL_HEADER: &str = "*model";
+/// The cells in front of the columns of a row: the model.
+const MODEL_CELLS: usize = 1;
+/// The hues a series is coloured from, hashed from the name of its model.
+const HUES: u64 = 360;
+/// The hosts of a run that are not a backend: its git remote and its scorer.
+const GIT_HOST: &str = "git";
+const SCORE_HOST: &str = "score";
+/// The request a push to the git remote ends in.
+const PUSH_PATH: &str = "/git-receive-pack";
+/// The token counts a logged request carries, all of them through the backend.
+const TOKEN_FIELDS: [&str; 4] = [
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+];
+const MATRIX_TABLE: &str = "report-matrix";
+const SPREAD_HEADER: &str = "#spread|the score of the best harness with the model minus that of the worst, how much the harness moves the outcome";
+const POOLED_HEADER: &str =
+    "#all harnesses|the share of the rounds won over every harness that drove the model";
+/// The row pooling every model, showing what every harness did over all of them.
+const EVERY_MODEL: &str = "every model";
+const NO_MATRIX_NOTE: &str = "no model with a round against another agent";
 /// The names the script keeps the chosen sort of the two tables under.
 const COST_TABLE: &str = "report-cost";
 const TIME_TABLE: &str = "report-time";
@@ -63,9 +84,11 @@ const COST_COLUMNS: [Column; 12] = [
     Column::CacheRead,
 ];
 /// The columns of the table over how the agents spent their seconds.
-const TIME_COLUMNS: [Column; 10] = [
-    Column::FirstPass,
-    Column::Banked,
+const TIME_COLUMNS: [Column; 12] = [
+    Column::FirstPassSeconds,
+    Column::FirstPassTokens,
+    Column::HighScoreSeconds,
+    Column::HighScoreTokens,
     Column::BudgetUsed,
     Column::Waiting,
     Column::FirstToken,
@@ -90,8 +113,10 @@ enum Column {
     OutputPerRoundWon,
     Input,
     CacheRead,
-    FirstPass,
-    Banked,
+    FirstPassSeconds,
+    FirstPassTokens,
+    HighScoreSeconds,
+    HighScoreTokens,
     BudgetUsed,
     Waiting,
     FirstToken,
@@ -124,11 +149,17 @@ impl Column {
             }
             Self::Input => "#input|the input tokens not read from the cache",
             Self::CacheRead => "#cache read|the input tokens read from the cache",
-            Self::FirstPass => {
-                "#first pass|the median share of the budget a run had spent when its first push passed, over the runs that passed"
+            Self::FirstPassSeconds => {
+                "#first pass|the median second of the scoring clock at which the first push passed, over the runs that passed"
             }
-            Self::Banked => {
-                "#banked|the median share of the budget a run had spent when it pushed its entry of record, over the runs that kept one"
+            Self::FirstPassTokens => {
+                "#tokens to first pass|the median tokens through the backend until that push, input, cache and output alike"
+            }
+            Self::HighScoreSeconds => {
+                "#high score|the median second at which the entry of record was pushed, the best entry of the run, over the runs that kept one"
+            }
+            Self::HighScoreTokens => {
+                "#tokens to high score|the median tokens through the backend until that push"
             }
             Self::BudgetUsed => {
                 "#budget used|the seconds of its runs over the seconds they were given"
@@ -190,8 +221,10 @@ impl Column {
                 .unwrap_or_default(),
             Self::Input => tokens_label(sum.input_tokens),
             Self::CacheRead => tokens_label(sum.cache_read_tokens),
-            Self::FirstPass => percent_label(median(&sum.first_pass_shares)),
-            Self::Banked => percent_label(median(&sum.banked_shares)),
+            Self::FirstPassSeconds => seconds_label(median(&sum.first_pass_seconds)),
+            Self::FirstPassTokens => count_label(median(&sum.first_pass_tokens)),
+            Self::HighScoreSeconds => seconds_label(median(&sum.high_score_seconds)),
+            Self::HighScoreTokens => count_label(median(&sum.high_score_tokens)),
             Self::BudgetUsed => percent_label(sum.budget_used()),
             Self::Waiting => percent_label(sum.waiting()),
             Self::FirstToken => sum
@@ -230,10 +263,14 @@ struct Played {
     peak_share: Option<f64>,
     compactions: u64,
     passed: bool,
-    /// The second of the first push that passed, on the scoring clock.
+    /// The second of the first push that passed, on the scoring clock, and
+    /// the tokens through the backend until then.
     first_pass: Option<u64>,
-    /// The second of the entry of record, on the scoring clock.
-    banked: Option<u64>,
+    first_pass_tokens: Option<u64>,
+    /// The second of the entry of record, the best entry of the run, and the
+    /// tokens through the backend until then.
+    high_score: Option<u64>,
+    high_score_tokens: Option<u64>,
     /// The rounds the seat got against other agents in the round, on the run
     /// of the last turn.
     rounds: ava_wire::Tally,
@@ -284,6 +321,18 @@ fn played_runs(
                 (metrics.peak_context_tokens > 0 && window > 0.0)
                     .then(|| metrics.peak_context_tokens as f64 / window)
             });
+            let requests = requests(&directory);
+            let first_pass = run
+                .attempts
+                .iter()
+                .enumerate()
+                .find(|(_, attempt)| attempt.verdict.passed);
+            let high_score = entry.attempt.and_then(|seconds| {
+                run.attempts
+                    .iter()
+                    .enumerate()
+                    .find(|(_, attempt)| attempt.seconds == seconds)
+            });
             played.push(Played {
                 setup: setup.clone(),
                 limit_seconds: run.limit_seconds,
@@ -292,12 +341,14 @@ fn played_runs(
                 peak_share,
                 compactions: run.compactions.unwrap_or_default(),
                 passed: run.passed(),
-                first_pass: run
-                    .attempts
-                    .iter()
-                    .find(|attempt| attempt.verdict.passed)
-                    .map(|attempt| attempt.seconds),
-                banked: entry.attempt,
+                first_pass: first_pass.map(|(_, attempt)| attempt.seconds),
+                first_pass_tokens: first_pass.and_then(|(index, attempt)| {
+                    tokens_until(&requests, &run, index, attempt.seconds)
+                }),
+                high_score: entry.attempt,
+                high_score_tokens: high_score.and_then(|(index, attempt)| {
+                    tokens_until(&requests, &run, index, attempt.seconds)
+                }),
                 rounds: if last {
                     tallies[entry.seat]
                 } else {
@@ -309,6 +360,82 @@ fn played_runs(
     }
 
     Ok(played)
+}
+
+/// One request the proxy of a run logged: the second it was answered, the
+/// tokens it moved, and whether it was a push to the git host, which is what
+/// puts an attempt on the wall clock.
+struct Request {
+    seconds: u64,
+    tokens: u64,
+    push: bool,
+}
+
+/// The requests of the run in `directory` from its proxy log, in order,
+/// none when the log is not there.
+fn requests(directory: &std::path::Path) -> Vec<Request> {
+    let Ok(logged) = std::fs::read_to_string(directory.join(docker::ACCESS_LOG)) else {
+        return Vec::new();
+    };
+    let count = |line: &serde_json::Value, field: &str| {
+        line.get(field)
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default()
+    };
+
+    logged
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter_map(|line| {
+            let seconds = usage::epoch_of(line.get("time")?.as_str()?)?;
+            let host = line.get("host")?.as_str()?;
+            let push = host == GIT_HOST
+                && line.get("method")?.as_str()? == "POST"
+                && line.get("uri")?.as_str()?.ends_with(PUSH_PATH);
+            let tokens = if host == GIT_HOST || host == SCORE_HOST {
+                0
+            } else {
+                TOKEN_FIELDS.iter().map(|field| count(&line, field)).sum()
+            };
+            Some(Request {
+                seconds,
+                tokens,
+                push,
+            })
+        })
+        .collect()
+}
+
+/// The tokens of `requests` up to the attempt at `index` with `seconds` on
+/// the scoring clock: put on the wall clock by the push that made it when
+/// every attempt has its push in the log, else by the start of the run.
+fn tokens_until(
+    requests: &[Request],
+    run: &ava_wire::Run,
+    index: usize,
+    seconds: u64,
+) -> Option<u64> {
+    let pushes: Vec<u64> = requests
+        .iter()
+        .filter(|request| request.push)
+        .map(|request| request.seconds)
+        .collect();
+    if requests.is_empty() {
+        return None;
+    }
+    let wall = if pushes.len() == run.attempts.len() {
+        pushes[index]
+    } else {
+        run.started_seconds + seconds
+    };
+
+    Some(
+        requests
+            .iter()
+            .filter(|request| !request.push && request.seconds <= wall)
+            .map(|request| request.tokens)
+            .sum(),
+    )
 }
 
 fn add_tally(tally: &mut ava_wire::Tally, view: ava_wire::Tally) {
@@ -343,10 +470,15 @@ struct Sum {
     limit_seconds: u64,
     peak_share: Option<f64>,
     compactions: u64,
-    /// The share of its budget every run that passed had spent at its first pass.
+    /// The share of its budget every run that passed had spent at its first
+    /// pass, the second of that pass and the tokens until it.
     first_pass_shares: Vec<f64>,
-    /// The share of its budget every run that kept an entry had spent at it.
-    banked_shares: Vec<f64>,
+    first_pass_seconds: Vec<f64>,
+    first_pass_tokens: Vec<f64>,
+    /// The second every run that kept an entry pushed its entry of record at,
+    /// and the tokens until it.
+    high_score_seconds: Vec<f64>,
+    high_score_tokens: Vec<f64>,
 }
 
 impl Sum {
@@ -382,11 +514,14 @@ impl Sum {
         if let Some(seconds) = played.first_pass {
             self.first_pass_shares
                 .extend(budget_share(seconds, played.limit_seconds));
+            self.first_pass_seconds.push(seconds as f64);
         }
-        if let Some(seconds) = played.banked {
-            self.banked_shares
-                .extend(budget_share(seconds, played.limit_seconds));
-        }
+        self.first_pass_tokens
+            .extend(played.first_pass_tokens.map(|tokens| tokens as f64));
+        self.high_score_seconds
+            .extend(played.high_score.map(|seconds| seconds as f64));
+        self.high_score_tokens
+            .extend(played.high_score_tokens.map(|tokens| tokens as f64));
     }
 
     fn unpriced(&self) -> u64 {
@@ -428,6 +563,11 @@ impl Sum {
 
     fn first_token(&self) -> Option<f64> {
         ratio(self.first_token_seconds, self.first_token_runs as f64)
+    }
+
+    /// The tokens through the backend over the rounds it won, a draw counting half.
+    fn tokens_per_round_won(&self) -> Option<f64> {
+        ratio(self.tokens() as f64, self.rounds_won())
     }
 
     fn tokens(&self) -> u64 {
@@ -510,6 +650,10 @@ fn agent_key(played: &Played) -> String {
     played.setup.agent.label()
 }
 
+fn model_key(played: &Played) -> String {
+    played.setup.agent.model.clone()
+}
+
 /// The report over the tournaments `names`, with a link to itself as a file
 /// when `linked`, which the file itself leaves out.
 pub(crate) fn page(names: &[String], linked: bool) -> std::io::Result<String> {
@@ -533,26 +677,26 @@ pub(crate) fn page(names: &[String], linked: bool) -> std::io::Result<String> {
         return Ok(document(&body));
     }
 
+    let by_model = grouped(&played, model_key);
     let by_agent = grouped(&played, agent_key);
     body.push_str(&summary(&records, &played));
-    body.push_str(&pass_curve(&registry, &by_agent));
+    body.push_str(&winners(&by_model));
+    body.push_str(&pass_curve(&by_model));
     body.push_str(&format!(
         "<div class=\"{}\">{}{}</div>",
         views::CHARTS_GRID_CLASSES,
         scatter(
-            &registry,
-            &by_agent,
+            &by_model,
             "score against dollars",
-            "the share of its rounds won every agent got against the dollars one of its runs cost",
+            "the share of its rounds won every model got against the dollars one of its runs cost, over every harness that drove it",
             "dollars per run",
             |sum| sum.dollars_per_run(),
             |dollars| format!("{} per run", usage::money(dollars)),
         ),
         scatter(
-            &registry,
-            &by_agent,
+            &by_model,
             "score against output tokens",
-            "the share of its rounds won every agent got against the thousands of output tokens one of its runs generated",
+            "the share of its rounds won every model got against the thousands of output tokens one of its runs generated",
             "thousand output tokens per run",
             Sum::thousand_output_per_run,
             |thousands| format!("{thousands:.0}k output tokens per run"),
@@ -560,14 +704,15 @@ pub(crate) fn page(names: &[String], linked: bool) -> std::io::Result<String> {
     ));
     body.push_str(&section(
         "cost",
-        "what every agent got for its dollars and tokens, over the finished rounds of the chosen tournaments",
-        &group_table(&registry, &by_agent, COST_TABLE, &COST_COLUMNS),
+        "what every model got for its dollars and tokens, over every harness that drove it and the finished rounds of the chosen tournaments",
+        &group_table(&by_model, COST_TABLE, &COST_COLUMNS),
     ));
     body.push_str(&section(
         "time",
-        "how every agent spent its seconds",
-        &group_table(&registry, &by_agent, TIME_TABLE, &TIME_COLUMNS),
+        "how every model spent its seconds",
+        &group_table(&by_model, TIME_TABLE, &TIME_COLUMNS),
     ));
+    body.push_str(&matrix(&by_agent));
 
     Ok(document(&body))
 }
@@ -651,6 +796,206 @@ fn summary(records: &[ava_wire::Tournament], played: &[Played]) -> String {
     ])
 }
 
+/// The tiles naming the model that won on score, on dollars per round won
+/// and on tokens per round won, each pooled over every harness that drove it.
+fn winners(models: &[Group]) -> String {
+    let best = |value: &dyn Fn(&Sum) -> Option<f64>, lowest: bool| {
+        let mut ranked: Vec<(f64, &Group)> = models
+            .iter()
+            .filter(|group| group.sum.rounds_won() > 0.0)
+            .filter_map(|group| Some((value(&group.sum)?, group)))
+            .collect();
+        ranked.sort_by(|left, right| left.0.total_cmp(&right.0));
+        let winner = if lowest {
+            ranked.first()
+        } else {
+            ranked.last()
+        };
+        winner.map(|(value, group)| (*value, views::escape(&group.setup.agent.model)))
+    };
+    let tile = |label: &str, winner: Option<(f64, String)>, detail: &dyn Fn(f64) -> String| {
+        let (value, model) = winner.unwrap_or_default();
+        views::tile(
+            label,
+            &model,
+            &if model.is_empty() {
+                String::new()
+            } else {
+                detail(value)
+            },
+            views::TILE_TEXT_CLASSES,
+        )
+    };
+
+    views::tiles(&[
+        tile("winner by score", best(&Sum::score, false), &|score| {
+            format!("score {score:.2}")
+        }),
+        tile(
+            "winner by cost",
+            best(&Sum::dollars_per_round_won, true),
+            &|dollars| format!("{} per round won", usage::money(dollars)),
+        ),
+        tile(
+            "winner by token efficiency",
+            best(&Sum::tokens_per_round_won, true),
+            &|tokens| format!("{} tokens per round won", tokens_label(tokens as u64)),
+        ),
+    ])
+}
+
+/// The score of every model under every harness, one row per model and one
+/// column per harness, with how far the harnesses spread it and what the
+/// model did over all of them, then one row over every model, and how the
+/// variance of the agents' scores splits between models and harnesses.
+fn matrix(agents: &[Group]) -> String {
+    let scored: Vec<&Group> = agents
+        .iter()
+        .filter(|group| group.sum.score().is_some())
+        .collect();
+    let mut harnesses: Vec<String> = scored
+        .iter()
+        .map(|group| group.setup.agent.harness.clone())
+        .collect();
+    harnesses.sort();
+    harnesses.dedup();
+    let mut models: Vec<String> = scored
+        .iter()
+        .map(|group| group.setup.agent.model.clone())
+        .collect();
+    models.sort();
+    models.dedup();
+
+    let mut headers: Vec<String> = vec![MODEL_HEADER.to_string()];
+    headers.extend(harnesses.iter().map(|harness| {
+        format!(
+            "#{harness}|the share of the rounds won by {harness} driving the model, half for a draw"
+        )
+    }));
+    headers.push(SPREAD_HEADER.to_string());
+    headers.push(POOLED_HEADER.to_string());
+    let headers: Vec<&str> = headers.iter().map(String::as_str).collect();
+
+    // A row is a model over the harnesses, or every model over them: the
+    // score of the pooled rounds in every cell, the spread of the cells.
+    let row = |name: &str, member: &dyn Fn(&Group) -> bool| {
+        let mut cells = vec![model_cell(name)];
+        let mut column_scores: Vec<f64> = Vec::new();
+        let mut pooled = ava_wire::Tally::default();
+        for harness in &harnesses {
+            let mut rounds = ava_wire::Tally::default();
+            for group in scored
+                .iter()
+                .filter(|group| member(group) && group.setup.agent.harness == *harness)
+            {
+                add_tally(&mut rounds, group.sum.rounds);
+                add_tally(&mut pooled, group.sum.rounds);
+            }
+            let score = rounds.score();
+            column_scores.extend(score);
+            cells.push(score.map(|score| format!("{score:.2}")).unwrap_or_default());
+        }
+        let spread = if column_scores.len() > 1 {
+            let low = column_scores.iter().copied().fold(f64::INFINITY, f64::min);
+            let high = column_scores
+                .iter()
+                .copied()
+                .fold(f64::NEG_INFINITY, f64::max);
+            format!("{:.2}", high - low)
+        } else {
+            String::new()
+        };
+        cells.push(spread);
+        cells.push(
+            pooled
+                .score()
+                .map(|score| format!("{score:.2}"))
+                .unwrap_or_default(),
+        );
+        (pooled.score().unwrap_or_default(), cells)
+    };
+    let mut rows: Vec<(f64, Vec<String>)> = models
+        .iter()
+        .map(|model| row(model, &|group: &Group| group.setup.agent.model == *model))
+        .collect();
+    rows.sort_by(|left, right| right.0.total_cmp(&left.0));
+    rows.push(row(EVERY_MODEL, &|_| true));
+
+    let model = |group: &Group| group.setup.agent.model.clone();
+    let harness = |group: &Group| group.setup.agent.harness.clone();
+    let (by_model, by_harness, rest) = variance_shares(&scored, &model, &harness);
+
+    format!(
+        "{}<p class=\"{} mt-3\">{}</p>",
+        section(
+            "models and harnesses",
+            "the score of every model under every harness that drove it, over the finished rounds of the chosen tournaments",
+            &views::sorted_table(
+                MATRIX_TABLE,
+                Some(headers.len() - 1),
+                &headers,
+                rows.into_iter().map(|(_, cells)| cells).collect(),
+                Some(NO_MATRIX_NOTE),
+            )
+        ),
+        views::NOTE_CLASSES,
+        views::explained(
+            &format!(
+                "variance of the agents' scores: models {}, harnesses {}, the rest {}",
+                percent_label(by_model),
+                percent_label(by_harness),
+                percent_label(rest)
+            ),
+            "how far the scores of the agents, every harness on every model, spread around their mean, split into the part between the means of the models, the part between the means of the harnesses, and what neither explains"
+        )
+    )
+}
+
+/// How the variance of the scores of `scored` splits: the share between the
+/// means of `factor`, the share between the means of `other`, and the rest,
+/// none of them without two agents to spread.
+fn variance_shares(
+    scored: &[&Group],
+    factor: &dyn Fn(&Group) -> String,
+    other: &dyn Fn(&Group) -> String,
+) -> (Option<f64>, Option<f64>, Option<f64>) {
+    let scores: Vec<f64> = scored
+        .iter()
+        .filter_map(|group| group.sum.score())
+        .collect();
+    if scores.len() < 2 {
+        return (None, None, None);
+    }
+    let mean = scores.iter().sum::<f64>() / scores.len() as f64;
+    let total: f64 = scores.iter().map(|score| (score - mean).powi(2)).sum();
+    if total <= 0.0 {
+        return (None, None, None);
+    }
+    let between = |key: &dyn Fn(&Group) -> String| -> f64 {
+        scored
+            .iter()
+            .map(|group| {
+                let peers: Vec<f64> = scored
+                    .iter()
+                    .filter(|peer| key(peer) == key(group))
+                    .filter_map(|peer| peer.sum.score())
+                    .collect();
+                let peer_mean = peers.iter().sum::<f64>() / peers.len() as f64;
+                (peer_mean - mean).powi(2)
+            })
+            .sum::<f64>()
+            / total
+    };
+    let by_factor = between(factor);
+    let by_other = between(other);
+
+    (
+        Some(by_factor),
+        Some(by_other),
+        Some((1.0 - by_factor - by_other).max(0.0)),
+    )
+}
+
 /// A titled table.
 fn section(title: &str, tooltip: &str, table: &str) -> String {
     format!(
@@ -660,78 +1005,58 @@ fn section(title: &str, tooltip: &str, table: &str) -> String {
     )
 }
 
-/// The table `name` of `groups` over `columns`, one row per group, its
+/// The table `name` of `groups` over `columns`, one row per model, its
 /// headers sorting it, arriving sorted by the score when it has one.
-fn group_table(
-    registry: &registry::Registry,
-    groups: &[Group],
-    name: &str,
-    columns: &[Column],
-) -> String {
-    let mut headers = vec!["", AGENT_HEADER];
+fn group_table(groups: &[Group], name: &str, columns: &[Column]) -> String {
+    let mut headers = vec![MODEL_HEADER];
     headers.extend(columns.iter().map(|column| column.header()));
     let score = columns
         .iter()
         .position(|column| matches!(column, Column::Score))
-        .map(|column| column + AGENT_CELLS);
+        .map(|column| column + MODEL_CELLS);
 
     let rows = groups
         .iter()
         .map(|group| {
-            let mut row = agent_cells(registry, &group.setup.agent).to_vec();
+            let mut row = vec![model_cell(&group.setup.agent.model)];
             row.extend(columns.iter().map(|column| column.cell(&group.sum)));
             row
         })
         .collect();
 
-    views::sorted_table(name, score, &headers, rows, Some(NO_AGENTS_NOTE))
+    views::sorted_table(name, score, &headers, rows, Some(NO_MODELS_NOTE))
 }
 
-/// The avatar of `agent` and the name it goes by, the harness on the model
-/// under a name of the registry.
-fn agent_cells(registry: &registry::Registry, agent: &ava_wire::Agent) -> [String; 2] {
-    let name = views::agent_name(registry, agent);
-    let detail = if name == agent.label() {
-        String::new()
-    } else {
-        format!(
-            "<div class=\"text-xs {} mt-0.5\">{}</div>",
-            views::MUTED_CLASSES,
-            views::escape(&agent.label())
-        )
-    };
-
-    [
-        views::avatar(agent, views::AVATAR_CLASSES),
-        format!(
-            "<span class=\"{}\">{}</span>{detail}",
-            views::MONO_CLASSES,
-            views::escape(&name)
-        ),
-    ]
+/// The name of a model, as a cell.
+fn model_cell(model: &str) -> String {
+    format!(
+        "<span class=\"{}\">{}</span>",
+        views::MONO_CLASSES,
+        views::escape(model)
+    )
 }
 
-/// The line of a group on a chart, without its points yet: named by the
-/// name the agent goes by, in the colour of its avatar.
-fn group_series(registry: &registry::Registry, setup: &ava_wire::Setup) -> chart::Series {
-    let (hue, _) = views::avatar_grid(&setup.agent);
+/// The line of a model on a chart, without its points yet, in a colour
+/// hashed from its name.
+fn group_series(group: &Group) -> chart::Series {
+    let model = &group.setup.agent.model;
 
     chart::Series {
-        label: views::agent_name(registry, &setup.agent),
-        hover: setup.label(),
-        hue,
-        face: views::avatar(&setup.agent, views::CHART_AVATAR_CLASSES),
+        label: model.clone(),
+        hover: model.clone(),
+        hue: views::fnv1a(model.as_bytes()) % HUES,
+        face: String::new(),
         points: Vec::new(),
     }
 }
 
-/// The share of every agent's runs that had passed by every share of the
-/// budget, one stepped line per agent from nothing to the end of the budget.
-fn pass_curve(registry: &registry::Registry, groups: &[Group]) -> String {
+/// The share of every model's runs that had passed by every share of the
+/// budget, one stepped line per model from nothing to the end of the budget.
+fn pass_curve(groups: &[Group]) -> String {
     let series: Vec<chart::Series> = groups
         .iter()
         .map(|group| {
-            let mut series = group_series(registry, &group.setup);
+            let mut series = group_series(group);
             let mut shares = group.sum.first_pass_shares.clone();
             shares.sort_by(f64::total_cmp);
             series.points.push(chart::Point {
@@ -764,14 +1089,14 @@ fn pass_curve(registry: &registry::Registry, groups: &[Group]) -> String {
 
     views::chart_panel(
         "passes over the budget",
-        "the share of every agent's runs that had a passing push by every share of the budget, over the finished rounds of the chosen tournaments, a curve climbing early for an agent that passes fast",
+        "the share of every model's runs that had a passing push by every share of the budget, over every harness that drove it and the finished rounds of the chosen tournaments, a curve climbing early for a model that passes fast",
         &chart::lines(
             &series,
             &chart::Axis::percent().titled("share of the budget spent"),
             &chart::Axis::percent().titled("share of the runs passed"),
             chart::Shape::Stepped,
             chart::WIDE_WIDTH,
-            NO_AGENTS_NOTE,
+            NO_MODELS_NOTE,
         ),
     )
 }
@@ -779,7 +1104,6 @@ fn pass_curve(registry: &registry::Registry, groups: &[Group]) -> String {
 /// The score of every group against `value`, one mark per group, for the
 /// groups with a score and a value.
 fn scatter(
-    registry: &registry::Registry,
     groups: &[Group],
     title: &str,
     tooltip: &str,
@@ -794,7 +1118,7 @@ fn scatter(
             let score = group.sum.score()?;
             let x = value(&group.sum)?;
             top = top.max(x);
-            let mut series = group_series(registry, &group.setup);
+            let mut series = group_series(group);
             series.points.push(chart::Point {
                 x,
                 y: score * PERCENT,
@@ -813,7 +1137,7 @@ fn scatter(
             &chart::Axis::percent().titled("share of the rounds won"),
             chart::Shape::Scatter,
             chart::NARROW_WIDTH,
-            NO_AGENTS_NOTE,
+            NO_MODELS_NOTE,
         ),
     )
 }
@@ -846,6 +1170,20 @@ fn document(body: &str) -> String {
 /// `label` with `title` behind its hover.
 fn titled(label: &str, title: &str) -> String {
     format!("<span title=\"{}\">{label}</span>", views::escape(title))
+}
+
+/// A count of seconds as a span, nothing for none.
+fn seconds_label(seconds: Option<f64>) -> String {
+    seconds
+        .map(|seconds| usage::span(seconds as u64))
+        .unwrap_or_default()
+}
+
+/// A count in thousands or millions, nothing for none.
+fn count_label(count: Option<f64>) -> String {
+    count
+        .map(|count| tokens_label(count as u64))
+        .unwrap_or_default()
 }
 
 /// A share as whole percent, nothing for none.
@@ -929,7 +1267,9 @@ mod tests {
             compactions: 0,
             passed: passed.is_some(),
             first_pass: passed,
-            banked: passed,
+            first_pass_tokens: passed.map(|_| 1000),
+            high_score: passed,
+            high_score_tokens: passed.map(|_| 1000),
             rounds: ava_wire::Tally {
                 won,
                 drawn: 0,
@@ -954,6 +1294,9 @@ mod tests {
         assert_eq!(sum.dollars_per_round_won(), Some(1.5));
         assert_eq!(sum.output_per_round_won(), Some(2250.0));
         assert_eq!(super::median(&sum.first_pass_shares), Some(0.5));
+        assert_eq!(super::median(&sum.first_pass_seconds), Some(500.0));
+        assert_eq!(super::median(&sum.high_score_tokens), Some(1000.0));
+        assert_eq!(sum.tokens_per_round_won(), Some(2250.0));
         assert_eq!(sum.waiting(), Some(0.5));
         assert_eq!(sum.budget_used(), Some(0.9));
         assert_eq!(sum.peak_share, Some(0.4));

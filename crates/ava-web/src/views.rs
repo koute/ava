@@ -376,7 +376,8 @@ const TILE_CLASSES: &str = "rounded-lg border border-neutral-800 bg-neutral-900 
 const TILE_LABEL_CLASSES: &str = "text-xs font-medium text-neutral-500";
 pub(crate) const TILE_VALUE_CLASSES: &str =
     "mt-1 text-lg font-semibold text-neutral-100 font-mono tabular-nums";
-const TILE_TEXT_CLASSES: &str = "mt-1 text-sm font-semibold text-neutral-100 font-mono break-all";
+pub(crate) const TILE_TEXT_CLASSES: &str =
+    "mt-1 text-sm font-semibold text-neutral-100 font-mono break-all";
 const TILE_DETAIL_CLASSES: &str = "mt-1 text-xs text-neutral-500 break-all";
 /// A tile listing names and links, one per line, none broken mid-word.
 const TILE_LIST_CLASSES: &str = "mt-1 text-sm text-neutral-100 font-mono";
@@ -4379,7 +4380,7 @@ fn graph_avatar(agent: &ava_wire::Agent, x: f64, y: f64) -> String {
 }
 
 /// The 64 bit FNV-1a hash of `bytes`, the same on every toolchain.
-fn fnv1a(bytes: &[u8]) -> u64 {
+pub(crate) fn fnv1a(bytes: &[u8]) -> u64 {
     bytes.iter().fold(FNV_OFFSET, |hash, byte| {
         (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME)
     })

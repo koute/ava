@@ -617,8 +617,8 @@ pub fn epoch_now() -> u64 {
         .unwrap_or(0)
 }
 
-/// The epoch of an ISO 8601 UTC date such as `2026-10-01T00:00:00+00:00`.
-fn epoch_of(date: &str) -> Option<u64> {
+/// The epoch of an ISO 8601 UTC date such as `2026-10-01T00:00:00+00:00`, to the second.
+pub fn epoch_of(date: &str) -> Option<u64> {
     let mut fields = date
         .split(['-', 'T', ':', '+', 'Z'])
         .filter(|field| !field.is_empty())
@@ -630,6 +630,7 @@ fn epoch_of(date: &str) -> Option<u64> {
         fields.next()??,
         fields.next()??,
     );
+    let second = fields.next().flatten().unwrap_or(0);
 
     // Days since the epoch from the civil date, after Howard Hinnant.
     let year = year - i64::from(month <= 2);
@@ -640,7 +641,13 @@ fn epoch_of(date: &str) -> Option<u64> {
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     let days = era * 146_097 + day_of_era - 719_468;
 
-    u64::try_from(days * SECONDS_PER_DAY as i64 + hour * SECONDS_PER_HOUR as i64 + minute * 60).ok()
+    u64::try_from(
+        days * SECONDS_PER_DAY as i64
+            + hour * SECONDS_PER_HOUR as i64
+            + minute * SECONDS_PER_MINUTE as i64
+            + second,
+    )
+    .ok()
 }
 
 /// The epoch second `epoch` as a UTC date and time, to the minute.
