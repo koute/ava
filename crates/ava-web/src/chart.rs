@@ -25,6 +25,11 @@ const LABEL_GAP: f64 = 8.0;
 const AXIS_LABEL_DROP: f64 = 20.0;
 /// The lift of a vertical axis label to sit centred on its tick.
 const LABEL_LIFT: f64 = 4.0;
+/// The side of an icon under a horizontal tick label and how far under the axis it sits.
+const ICON_SIDE: f64 = 14.0;
+const ICON_DROP: f64 = 26.0;
+/// Icons stay in the background of the labels they belong to.
+const ICON_OPACITY: &str = "0.6";
 /// The baseline of an axis title, in from the edge of the drawing.
 const AXIS_TITLE_INSET: f64 = 6.0;
 const FONT_SIZE: u32 = 11;
@@ -37,6 +42,13 @@ const HIT_WIDTH: f64 = 14.0;
 const POINT_RADIUS: f64 = 2.75;
 /// The radius of a mark standing alone, with no line to find it by.
 const MARK_RADIUS: f64 = 5.0;
+/// The share of a slot the bars of its group fill, the rest is the gap to the next slot.
+const BAR_GROUP_SHARE: f64 = 0.6;
+/// The share of its lane a bar leaves open on either side, so neighbours do not touch.
+const BAR_LANE_GAP: f64 = 0.15;
+/// A bar is a tinted area with its colour on the edge, so a chart of many stays quiet.
+const BAR_FILL_OPACITY: &str = "0.35";
+const BAR_EDGE_WIDTH: f64 = 1.0;
 /// The ticks of a percent axis, every quarter of it.
 const PERCENT_STEP: f64 = 25.0;
 const PERCENT_MAX: f64 = 100.0;
@@ -67,6 +79,16 @@ const GRID_CLASSES: &str = "stroke-neutral-800";
 const AXIS_CLASSES: &str = "stroke-neutral-700";
 const LABEL_CLASSES: &str = "fill-neutral-500 font-mono";
 const AXIS_TITLE_CLASSES: &str = "fill-neutral-400 font-sans";
+/// The lines splitting a plot into its quadrants, and the labels in their corners.
+const QUADRANT_LINE_CLASSES: &str = "stroke-neutral-700";
+const QUADRANT_DASHES: &str = "4 4";
+const QUADRANT_LABEL_CLASSES: &str = "fill-neutral-500 font-sans";
+/// The tint of the quadrant to be in and of the one to stay out of.
+const GOOD_QUADRANT_CLASSES: &str = "fill-emerald-500/10";
+const BAD_QUADRANT_CLASSES: &str = "fill-red-500/10";
+/// How far a quadrant label sits in from the corner of its quadrant.
+const QUADRANT_LABEL_INSET: f64 = 8.0;
+const QUADRANT_LABEL_DROP: f64 = 14.0;
 const POINT_STROKE_CLASSES: &str = "stroke-neutral-900";
 const LEGEND_CLASSES: &str = "flex flex-wrap gap-x-4 gap-y-1.5 mt-3 text-xs text-neutral-300";
 const LEGEND_ITEM_CLASSES: &str =
@@ -84,6 +106,16 @@ pub(crate) enum Shape {
     Stepped,
     /// Marks alone, one per point, with no line between them.
     Scatter,
+    /// Bars, one per point, the points of every series at a slot standing
+    /// side by side in it.
+    Bars,
+}
+
+/// The four quadrants of a plot split at the middle of both axes, each with
+/// its label: top left, top right, bottom left, bottom right. The top left is
+/// the one to be in and the bottom right the one to stay out of.
+pub(crate) struct Quadrants {
+    pub(crate) labels: [String; 4],
 }
 
 /// One line of a chart.
@@ -114,6 +146,8 @@ pub(crate) struct Axis {
     pub(crate) ticks: Vec<(f64, String)>,
     /// What the axis measures, written along it.
     pub(crate) title: String,
+    /// An icon under a tick label, as the address of its image, by tick value.
+    pub(crate) icons: Vec<(f64, String)>,
 }
 
 impl Axis {
@@ -144,6 +178,7 @@ impl Axis {
             max: top,
             ticks,
             title: String::new(),
+            icons: Vec::new(),
         }
     }
 
@@ -176,6 +211,7 @@ impl Axis {
             max,
             ticks,
             title: String::new(),
+            icons: Vec::new(),
         }
     }
 
@@ -193,6 +229,7 @@ impl Axis {
             max: PERCENT_MAX,
             ticks,
             title: String::new(),
+            icons: Vec::new(),
         }
     }
 
@@ -222,6 +259,7 @@ impl Axis {
             max: top as f64,
             ticks,
             title: String::new(),
+            icons: Vec::new(),
         }
     }
 
@@ -273,6 +311,7 @@ pub(crate) fn lines(
     horizontal: &Axis,
     vertical: &Axis,
     shape: Shape,
+    quadrants: Option<&Quadrants>,
     width: f64,
     empty: &str,
 ) -> String {
@@ -316,6 +355,14 @@ pub(crate) fn lines(
             ));
         }
     }
+    for (value, address) in &horizontal.icons {
+        svg.push_str(&format!(
+            "<image href=\"{}\" x=\"{:.1}\" y=\"{:.1}\" width=\"{ICON_SIDE}\" height=\"{ICON_SIDE}\" opacity=\"{ICON_OPACITY}\"/>",
+            escape(address),
+            x_of(*value) - ICON_SIDE / 2.0,
+            baseline + ICON_DROP
+        ));
+    }
     svg.push_str(&format!(
         "<line x1=\"{LEFT}\" y1=\"{baseline:.1}\" x2=\"{:.1}\" y2=\"{baseline:.1}\" class=\"{AXIS_CLASSES}\"/>",
         width - RIGHT
@@ -338,6 +385,40 @@ pub(crate) fn lines(
         ));
     }
 
+    if let Some(quadrants) = quadrants {
+        let middle_x = x_of((horizontal.min + horizontal.max) / 2.0);
+        let middle_y = y_of((vertical.min + vertical.max) / 2.0);
+        let (left, right, top, bottom) = (LEFT, width - RIGHT, TOP, baseline);
+        let [top_left, top_right, bottom_left, bottom_right] = &quadrants.labels;
+        svg.push_str(&format!(
+            "<rect x=\"{left}\" y=\"{top}\" width=\"{:.1}\" height=\"{:.1}\" class=\"{GOOD_QUADRANT_CLASSES}\"/>\
+             <rect x=\"{middle_x:.1}\" y=\"{middle_y:.1}\" width=\"{:.1}\" height=\"{:.1}\" class=\"{BAD_QUADRANT_CLASSES}\"/>\
+             <line x1=\"{middle_x:.1}\" y1=\"{top}\" x2=\"{middle_x:.1}\" y2=\"{bottom:.1}\" stroke-dasharray=\"{QUADRANT_DASHES}\" class=\"{QUADRANT_LINE_CLASSES}\"/>\
+             <line x1=\"{left}\" y1=\"{middle_y:.1}\" x2=\"{right:.1}\" y2=\"{middle_y:.1}\" stroke-dasharray=\"{QUADRANT_DASHES}\" class=\"{QUADRANT_LINE_CLASSES}\"/>\
+             <text x=\"{:.1}\" y=\"{:.1}\" class=\"{QUADRANT_LABEL_CLASSES}\">{}</text>\
+             <text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\" class=\"{QUADRANT_LABEL_CLASSES}\">{}</text>\
+             <text x=\"{:.1}\" y=\"{:.1}\" class=\"{QUADRANT_LABEL_CLASSES}\">{}</text>\
+             <text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\" class=\"{QUADRANT_LABEL_CLASSES}\">{}</text>",
+            middle_x - left,
+            middle_y - top,
+            right - middle_x,
+            bottom - middle_y,
+            left + QUADRANT_LABEL_INSET,
+            top + QUADRANT_LABEL_DROP,
+            escape(top_left),
+            right - QUADRANT_LABEL_INSET,
+            top + QUADRANT_LABEL_DROP,
+            escape(top_right),
+            left + QUADRANT_LABEL_INSET,
+            bottom - QUADRANT_LABEL_INSET,
+            escape(bottom_left),
+            right - QUADRANT_LABEL_INSET,
+            bottom - QUADRANT_LABEL_INSET,
+            escape(bottom_right)
+        ));
+    }
+
+    let count = series.len();
     for (index, series) in series.iter().enumerate() {
         if series.points.is_empty() {
             continue;
@@ -350,7 +431,20 @@ pub(crate) fn lines(
         // wherever the cursor rests on the line, and the marks on top with
         // hovers of their own. The rules below light the group and its legend
         // entry together. A scatter has no line, its marks stand alone.
-        if shape != Shape::Scatter {
+        if shape == Shape::Bars {
+            let lane = BAR_GROUP_SHARE / count as f64;
+            let gap = lane * BAR_LANE_GAP;
+            for point in &series.points {
+                let left = x_of(point.x - BAR_GROUP_SHARE / 2.0 + index as f64 * lane + gap);
+                let top = y_of(point.y);
+                svg.push_str(&format!(
+                    "<rect x=\"{left:.1}\" y=\"{top:.1}\" width=\"{:.1}\" height=\"{:.1}\" fill=\"{color}\" fill-opacity=\"{BAR_FILL_OPACITY}\" stroke=\"{color}\" stroke-width=\"{BAR_EDGE_WIDTH}\" class=\"{STROKE_CLASS}\"><title>{}</title></rect>",
+                    x_of(point.x + lane - 2.0 * gap) - x_of(point.x),
+                    baseline - top,
+                    escape(&point.hover)
+                ));
+            }
+        } else if shape != Shape::Scatter {
             let mut path = String::new();
             for (index, point) in series.points.iter().enumerate() {
                 let (x, y) = (x_of(point.x), y_of(point.y));
@@ -374,7 +468,11 @@ pub(crate) fn lines(
             POINT_RADIUS
         };
         // A point without a hover is a bend of the line, not a mark on it.
-        for point in series.points.iter().filter(|point| !point.hover.is_empty()) {
+        for point in series
+            .points
+            .iter()
+            .filter(|point| shape != Shape::Bars && !point.hover.is_empty())
+        {
             svg.push_str(&format!(
                 "<circle cx=\"{:.1}\" cy=\"{:.1}\" r=\"{radius}\" fill=\"{color}\" class=\"{POINT_STROKE_CLASSES}\" stroke-width=\"1.5\"><title>{}</title></circle>",
                 x_of(point.x),
@@ -515,6 +613,7 @@ mod tests {
             &horizontal,
             &vertical,
             Shape::Stepped,
+            None,
             super::NARROW_WIDTH,
             "nothing",
         );
@@ -533,6 +632,7 @@ mod tests {
             &horizontal,
             &vertical,
             Shape::Straight,
+            None,
             super::WIDE_WIDTH,
             "nothing",
         );
@@ -544,10 +644,28 @@ mod tests {
             &horizontal,
             &vertical,
             Shape::Scatter,
+            Some(&super::Quadrants {
+                labels: ["a b", "c", "d", "e"].map(str::to_string),
+            }),
             super::NARROW_WIDTH,
             "nothing",
         );
         assert!(!scatter.contains("<path"));
+        assert!(scatter.contains(">a b</text>"));
+        assert_eq!(scatter.matches("stroke-dasharray").count(), 2);
+
+        let bars = super::lines(
+            &series,
+            &horizontal,
+            &vertical,
+            Shape::Bars,
+            None,
+            super::NARROW_WIDTH,
+            "nothing",
+        );
+        assert_eq!(bars.matches("<rect").count(), 2);
+        assert!(!bars.contains("<circle"));
+        assert!(bars.contains("<title>second</title>"));
         assert_eq!(scatter.matches("<circle").count(), 2);
         assert!(scatter.contains("r=\"5\""));
 
@@ -556,6 +674,7 @@ mod tests {
             &horizontal,
             &vertical,
             Shape::Straight,
+            None,
             super::NARROW_WIDTH,
             "nothing",
         );

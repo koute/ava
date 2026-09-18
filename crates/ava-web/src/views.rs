@@ -2262,7 +2262,7 @@ pub(crate) fn tournaments_page(notice: &Notice, selection: &Selection) -> std::i
     // checked across a refresh.
     body.push_str(&format!(
         "<p class=\"{TITLE_CLASSES}\">tournaments</p>\
-         <form method=\"get\" action=\"/report\">{}\
+         <form method=\"get\" action=\"/report\" target=\"_blank\">{}\
          <div class=\"flex justify-end mt-3\"><button class=\"{BUTTON_CLASSES} {CONTROL_HEIGHT}\" title=\"{}\">report</button></div></form>",
         table(
             &[
@@ -3283,6 +3283,7 @@ pub(crate) fn score_chart(
             &chart::Axis::counted(1, record.rounds.len() as u64).titled("round"),
             &chart::Axis::values(top).titled("score"),
             chart::Shape::Stepped,
+            None,
             width,
             NO_SCORE_YET,
         ),
@@ -3352,6 +3353,7 @@ fn points_chart(
             &chart::Axis::counted(1, record.rounds.len() as u64).titled("round"),
             &chart::Axis::values(top as f64).titled("points"),
             chart::Shape::Straight,
+            None,
             chart::NARROW_WIDTH,
             NO_POINTS_YET,
         ),
@@ -3430,6 +3432,7 @@ fn banked_chart(
             &chart::Axis::seconds(latest).titled("seconds of the run"),
             &chart::Axis::values(ceiling as f64).titled("points"),
             chart::Shape::Stepped,
+            None,
             chart::WIDE_WIDTH,
             NO_POINTS_YET,
         )

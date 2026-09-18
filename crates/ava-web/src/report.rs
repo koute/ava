@@ -18,6 +18,9 @@ const MAIN_CLASSES: &str = "w-full px-6 py-6";
 const HEADING_CLASSES: &str = "text-lg font-semibold text-neutral-100";
 const HEADING_ROW_CLASSES: &str = "flex items-baseline gap-4";
 const SUBTITLE_CLASSES: &str = "text-xs text-neutral-500 mt-1";
+/// A chapter of the report: a heading over a rule, the tables and charts of the chapter under it.
+const CHAPTER_CLASSES: &str =
+    "text-base font-semibold text-neutral-100 mt-12 mb-4 pb-2 border-b border-neutral-800";
 const FILE_PREFIX: &str = "report";
 const FILE_SUFFIX: &str = ".html";
 const NAME_SEPARATOR: &str = "-";
@@ -58,12 +61,61 @@ const TOKEN_FIELDS: [&str; 4] = [
 const NO_HARNESSES_NOTE: &str = "no model with a round against another agent";
 /// The room a model gets on either side of its slot on the harness chart.
 const SLOT_MARGIN: f64 = 0.5;
+/// What a scatter is about: its title and the explanation behind it, the
+/// measure along its horizontal axis and the labels of its quadrants, top
+/// left, top right, bottom left, bottom right.
+struct Scatter {
+    title: &'static str,
+    tooltip: &'static str,
+    measure: &'static str,
+    quadrants: [&'static str; 4],
+}
+
+const DOLLARS_SCATTER: Scatter = Scatter {
+    title: "score against dollars",
+    tooltip: "the share of its rounds won every model got against the dollars one of its runs cost, over every harness that drove it",
+    measure: "dollars per run",
+    quadrants: [
+        "good, cheap",
+        "good, expensive",
+        "weak, cheap",
+        "weak, expensive",
+    ],
+};
+const OUTPUT_SCATTER: Scatter = Scatter {
+    title: "score against output tokens",
+    tooltip: "the share of its rounds won every model got against the thousands of output tokens one of its runs generated",
+    measure: "thousand output tokens per run",
+    quadrants: [
+        "good, few tokens",
+        "good, many tokens",
+        "weak, few tokens",
+        "weak, many tokens",
+    ],
+};
+const TIME_SCATTER: Scatter = Scatter {
+    title: "score against time to high score",
+    tooltip: "the share of its rounds won every model got against the mean second of the scoring clock at which it pushed its entry of record",
+    measure: "mean time to high score",
+    quadrants: ["lightning strike", "good, slow", "fast, weak", "slow, weak"],
+};
+const TOKENS_SCATTER: Scatter = Scatter {
+    title: "score against tokens to high score",
+    tooltip: "the share of its rounds won every model got against the mean million tokens through the backend until it pushed its entry of record",
+    measure: "mean million tokens to high score",
+    quadrants: [
+        "lightning strike",
+        "good, many tokens",
+        "few tokens, weak",
+        "many tokens, weak",
+    ],
+};
 /// The names the script keeps the chosen sorts of the tables under.
 const MODELS_TABLE: &str = "report-models";
 const TOURNAMENTS_TABLE: &str = "report-tournaments";
 const OVERALL_HEADER: &str = "#overall|the share of the rounds against other agents won over every chosen tournament, half for a draw";
-const COST_PER_SUCCESS_HEADER: &str = "#cost per success|the dollars of its runs at the prices of the registry over the runs a push of which passed the verifier";
-const TOKENS_PER_SUCCESS_HEADER: &str = "#tokens per success|the tokens through the backend over the runs a push of which passed the verifier";
+const COST_PER_SUCCESS_HEADER: &str = "#cost per passing run|the dollars of its runs at the prices of the registry over the runs a push of which passed the verifier";
+const TOKENS_PER_SUCCESS_HEADER: &str = "#tokens per passing run|the tokens through the backend over the runs a push of which passed the verifier";
 /// The column of the tournaments table holding the overall score.
 const OVERALL_COLUMN: usize = 1;
 /// The columns of the table, after the model.
@@ -495,32 +547,47 @@ pub(crate) fn page(names: &[String], linked: bool) -> std::io::Result<String> {
     let by_model = grouped(&played, model_key);
     let by_agent = grouped(&played, agent_key);
     body.push_str(&winners(&by_model));
+    body.push_str(&chapter("tournaments"));
     body.push_str(&tournaments_table(&records, &played));
+    body.push_str(&tournaments_chart(&records, &by_model, &played));
     body.push_str(&pass_curve(&by_model));
     body.push_str(&format!(
         "<div class=\"{}\">{}{}</div>",
         views::CHARTS_GRID_CLASSES,
         scatter(
             &by_model,
-            "score against dollars",
-            "the share of its rounds won every model got against the dollars one of its runs cost, over every harness that drove it",
-            "dollars per run",
+            &DOLLARS_SCATTER,
+            chart::Axis::values,
             |sum| sum.dollars_per_run(),
             |dollars| format!("{} per run", usage::money(dollars)),
         ),
         scatter(
             &by_model,
-            "score against output tokens",
-            "the share of its rounds won every model got against the thousands of output tokens one of its runs generated",
-            "thousand output tokens per run",
+            &OUTPUT_SCATTER,
+            chart::Axis::values,
             Sum::thousand_output_per_run,
             |thousands| format!("{thousands:.0}k output tokens per run"),
         ),
     ));
-    body.push_str(&section(
-        "models",
-        "every model over every harness that drove it and the finished rounds of the chosen tournaments",
-        &group_table(&by_model, MODELS_TABLE, &COLUMNS),
+    body.push_str(&chapter("model statistics"));
+    body.push_str(&group_table(&by_model, MODELS_TABLE, &COLUMNS));
+    body.push_str(&format!(
+        "<div class=\"{}\">{}{}</div>",
+        views::CHARTS_GRID_CLASSES,
+        scatter(
+            &by_model,
+            &TIME_SCATTER,
+            |top| chart::Axis::seconds(top as u64),
+            |sum| mean(&sum.high_score_seconds),
+            |seconds| format!("high score after {}", usage::span(seconds as u64)),
+        ),
+        scatter(
+            &by_model,
+            &TOKENS_SCATTER,
+            chart::Axis::values,
+            |sum| mean(&sum.high_score_tokens).map(|tokens| tokens / MILLION),
+            |millions| format!("{millions:.1}M tokens to the high score"),
+        ),
     ));
     body.push_str(&harness_chart(&by_agent));
 
@@ -700,6 +767,7 @@ fn harness_chart(agents: &[Group]) -> String {
             .map(|(index, (_, model))| (index as f64, model.clone()))
             .collect(),
         title: String::new(),
+        icons: Vec::new(),
     };
 
     let model = |group: &Group| group.setup.agent.model.clone();
@@ -709,13 +777,14 @@ fn harness_chart(agents: &[Group]) -> String {
     format!(
         "{}<p class=\"{} mt-3\">{}</p>",
         views::chart_panel(
-            "models and harnesses",
+            "model to harness variance",
             "the score of every model under every harness that drove it, one mark per harness in the slot of the model, the best model leftmost",
             &chart::lines(
                 &series,
                 &horizontal,
                 &chart::Axis::percent().titled("share of the rounds won"),
                 chart::Shape::Scatter,
+                None,
                 chart::WIDE_WIDTH,
                 NO_HARNESSES_NOTE,
             ),
@@ -778,12 +847,11 @@ fn variance_shares(
     )
 }
 
-/// A titled table.
-fn section(title: &str, tooltip: &str, table: &str) -> String {
+/// The heading of a chapter.
+fn chapter(title: &str) -> String {
     format!(
-        "<p class=\"{}\">{}</p>{table}",
-        views::TITLE_CLASSES,
-        views::explained(title, tooltip)
+        "<h2 class=\"{CHAPTER_CLASSES}\">{}</h2>",
+        views::escape(title)
     )
 }
 
@@ -877,6 +945,7 @@ fn pass_curve(groups: &[Group]) -> String {
             &chart::Axis::percent().titled("share of the budget spent"),
             &chart::Axis::percent().titled("share of the runs passed"),
             chart::Shape::Stepped,
+            None,
             chart::WIDE_WIDTH,
             NO_MODELS_NOTE,
         ),
@@ -884,12 +953,12 @@ fn pass_curve(groups: &[Group]) -> String {
 }
 
 /// The score of every group against `value`, one mark per group, for the
-/// groups with a score and a value.
+/// groups with a score and a value, on the horizontal `axis` up to the
+/// largest value.
 fn scatter(
     groups: &[Group],
-    title: &str,
-    tooltip: &str,
-    measure: &str,
+    about: &Scatter,
+    axis: impl Fn(f64) -> chart::Axis,
     value: impl Fn(&Sum) -> Option<f64>,
     detail: impl Fn(f64) -> String,
 ) -> String {
@@ -911,13 +980,16 @@ fn scatter(
         .collect();
 
     views::chart_panel(
-        title,
-        tooltip,
+        about.title,
+        about.tooltip,
         &chart::lines(
             &series,
-            &chart::Axis::values(top).titled(measure),
+            &axis(top).titled(about.measure),
             &chart::Axis::percent().titled("share of the rounds won"),
             chart::Shape::Scatter,
+            Some(&chart::Quadrants {
+                labels: about.quadrants.map(str::to_string),
+            }),
             chart::NARROW_WIDTH,
             NO_MODELS_NOTE,
         ),
@@ -970,15 +1042,78 @@ fn tournaments_table(records: &[ava_wire::Tournament], played: &[Played]) -> Str
         })
         .collect();
 
-    section(
-        "tournaments",
-        "what every model did in every chosen tournament",
-        &views::sorted_table(
-            TOURNAMENTS_TABLE,
-            Some(OVERALL_COLUMN),
-            &headers,
-            rows,
-            Some(NO_MODELS_NOTE),
+    views::sorted_table(
+        TOURNAMENTS_TABLE,
+        Some(OVERALL_COLUMN),
+        &headers,
+        rows,
+        Some(NO_MODELS_NOTE),
+    )
+}
+
+/// The score of every model in every chosen tournament as bars, one slot per
+/// tournament with a bar per model in it.
+fn tournaments_chart(
+    records: &[ava_wire::Tournament],
+    models: &[Group],
+    played: &[Played],
+) -> String {
+    let series: Vec<chart::Series> = models
+        .iter()
+        .map(|model| {
+            let name = &model.setup.agent.model;
+            let mut series = group_series(model);
+            for (index, record) in records.iter().enumerate() {
+                let own = grouped(
+                    played
+                        .iter()
+                        .filter(|run| run.tournament == index && run.setup.agent.model == *name),
+                    model_key,
+                );
+                if let Some(score) = own.first().and_then(|own| own.sum.score()) {
+                    series.points.push(chart::Point {
+                        x: index as f64,
+                        y: score * PERCENT,
+                        hover: format!("{name} in {}, score {score:.2}", record.name),
+                    });
+                }
+            }
+            series
+        })
+        .collect();
+    let horizontal = chart::Axis {
+        min: -SLOT_MARGIN,
+        max: records.len() as f64 - 1.0 + SLOT_MARGIN,
+        ticks: records
+            .iter()
+            .enumerate()
+            .map(|(index, record)| (index as f64, record.name.clone()))
+            .collect(),
+        title: String::new(),
+        icons: records
+            .iter()
+            .enumerate()
+            .filter_map(|(index, record)| {
+                let (logo, kind) = views::game_logo(&record.game)?;
+                Some((
+                    index as f64,
+                    format!("data:{kind};base64,{}", base64(&logo)),
+                ))
+            })
+            .collect(),
+    };
+
+    views::chart_panel(
+        "score by tournament",
+        "the share of the rounds every model won in every chosen tournament, one bar per model in the slot of the tournament",
+        &chart::lines(
+            &series,
+            &horizontal,
+            &chart::Axis::percent().titled("share of the rounds won"),
+            chart::Shape::Bars,
+            None,
+            chart::WIDE_WIDTH,
+            NO_MODELS_NOTE,
         ),
     )
 }
