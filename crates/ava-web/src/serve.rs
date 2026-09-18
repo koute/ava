@@ -290,13 +290,13 @@ fn view(segments: &[&str], query: Option<&str>) -> Answer {
     let mut attachment = None;
     let outcome = match segments {
         [""] => views::runs_page(&notice, &selection, &pending),
+        ["reports"] => report::page(&query_values(query, TOURNAMENT_FIELD)),
         ["report"] => {
             let names = query_values(query, TOURNAMENT_FIELD);
-            let download = query_value(query, DOWNLOAD_FIELD).is_some();
-            if download {
+            if query_value(query, DOWNLOAD_FIELD).is_some() {
                 attachment = Some(report::file_name(&names));
             }
-            report::page(&names, download)
+            report::file(&names)
         }
         ["scoreboard"] => views::scoreboard_page(&selection),
         ["agents"] => views::agents_page(&notice, &selection),

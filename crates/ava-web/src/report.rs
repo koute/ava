@@ -21,7 +21,7 @@ const SUBTITLE_CLASSES: &str = "text-xs text-neutral-500 mt-1";
 /// The tabs of the report and the classes their rules are scoped by.
 const TABS_CLASS: &str = "report-tabs";
 const TAB_FIELD: &str = "tab";
-const TAB_ROW_CLASSES: &str = "flex gap-1.5 mt-10 mb-2 pb-2 border-b border-neutral-800";
+const TAB_ROW_CLASSES: &str = "flex gap-1.5 mt-8 mb-3 pb-2 border-b border-neutral-800";
 const TAB_CLASSES: &str = "block rounded-md px-3 py-1.5 text-sm text-neutral-400 cursor-pointer \
                            hover:text-neutral-100 hover:bg-neutral-800/60 transition-colors \
                            peer-checked:bg-neutral-800 peer-checked:text-neutral-100 \
@@ -30,7 +30,22 @@ const FILE_PREFIX: &str = "report";
 const FILE_SUFFIX: &str = ".html";
 const NAME_SEPARATOR: &str = "-";
 const DOWNLOAD_LABEL: &str = "download";
-const NO_TOURNAMENTS_NOTE: &str = "no tournament chosen, check some on the tournaments page";
+const NO_TOURNAMENTS_NOTE: &str = "no tournament chosen, check some above";
+/// The chips choosing the tournaments of the report, on the page of the
+/// interface: a hidden box each, the chip lit while it is checked, and the
+/// two buttons at the end of the row.
+const CHOOSER_CLASSES: &str = "p-4 flex flex-wrap items-center gap-3";
+const CHOICES_CLASSES: &str = "flex flex-wrap items-center gap-3 grow";
+const ACTIONS_CLASSES: &str = "flex items-center gap-3 ml-auto";
+const CHOICE_FIELD: &str = "choice";
+const CHOICE_CLASSES: &str = "flex items-center gap-2 rounded-md border border-neutral-800 bg-neutral-950 \
+                              px-2.5 h-9 text-sm text-neutral-400 cursor-pointer transition-colors \
+                              hover:text-neutral-100 hover:border-neutral-700 \
+                              peer-checked:border-indigo-500/70 peer-checked:bg-indigo-500/10 peer-checked:text-neutral-100 \
+                              peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-indigo-500";
+const GENERATE_LABEL: &str = "generate";
+const DOWNLOAD_CLASSES: &str = "inline-flex items-center rounded-md border border-neutral-700 px-4 font-medium \
+                                text-neutral-300 hover:bg-neutral-800 transition-colors";
 const NO_ROUNDS_NOTE: &str = "no finished round in the chosen tournaments";
 const NO_MODELS_NOTE: &str = "no run in a finished round";
 const PERCENT: f64 = 100.0;
@@ -562,18 +577,94 @@ fn grouped_by_harness(played: &[Played]) -> Vec<Group> {
     groups
 }
 
-/// The report over the tournaments `names`, with a link to itself as a file
-/// when `linked`, which the file itself leaves out.
-pub(crate) fn page(names: &[String], linked: bool) -> std::io::Result<String> {
+/// The page of the interface: the boxes choosing the tournaments, the report
+/// over the chosen ones under them.
+pub(crate) fn page(names: &[String]) -> std::io::Result<String> {
+    let mut body = chooser(names)?;
+    body.push_str(&report(names)?);
+
+    Ok(views::page(&[views::REPORTS_SECTION], &body))
+}
+
+/// The report over the tournaments `names` as a file of its own, headed by
+/// what it spans and when it was rendered.
+pub(crate) fn file(names: &[String]) -> std::io::Result<String> {
+    let mut body = heading(names);
+    body.push_str(&report(names)?);
+
+    Ok(document(&body))
+}
+
+/// The chips choosing the tournaments of the report, every tournament on
+/// disk with the chosen ones lit, the button generating the report over them
+/// and, once there is one, the button handing it over as a file.
+fn chooser(names: &[String]) -> std::io::Result<String> {
+    let choices: String = tournament::list()?
+        .iter()
+        .enumerate()
+        .map(|(index, record)| {
+            format!(
+                "<span><input type=\"checkbox\" id=\"{CHOICE_FIELD}-{index}\" name=\"{}\" value=\"{}\" class=\"peer sr-only\"{}>\
+                 <label for=\"{CHOICE_FIELD}-{index}\" class=\"{CHOICE_CLASSES}\">{}<span class=\"{}\">{}</span></label></span>",
+                crate::serve::TOURNAMENT_FIELD,
+                views::escape(&record.name),
+                if names.contains(&record.name) {
+                    " checked"
+                } else {
+                    ""
+                },
+                views::logo_cell(&record.game),
+                views::MONO_CLASSES,
+                views::escape(&record.name)
+            )
+        })
+        .collect();
+    let download = if names.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<a class=\"{DOWNLOAD_CLASSES} {}\" href=\"/report?{}&{}=on\">{DOWNLOAD_LABEL}</a>",
+            views::CONTROL_HEIGHT,
+            query(names),
+            crate::serve::DOWNLOAD_FIELD
+        )
+    };
+
+    Ok(format!(
+        "<p class=\"{}\">tournaments</p>\
+         <form method=\"get\" action=\"/reports\" class=\"{} {CHOOSER_CLASSES}\"><div class=\"{CHOICES_CLASSES}\">{choices}</div>\
+         <div class=\"{ACTIONS_CLASSES}\">{download}<button class=\"{} {}\">{GENERATE_LABEL}</button></div></form>",
+        views::FIRST_TITLE_CLASSES,
+        views::CARD_CLASSES,
+        views::BUTTON_CLASSES,
+        views::CONTROL_HEIGHT
+    ))
+}
+
+/// The query naming every tournament of `names`.
+fn query(names: &[String]) -> String {
+    names
+        .iter()
+        .map(|name| {
+            format!(
+                "{}={}",
+                crate::serve::TOURNAMENT_FIELD,
+                crate::serve::urlencode(name)
+            )
+        })
+        .collect::<Vec<String>>()
+        .join("&")
+}
+
+/// The report over the tournaments `names`, or the note saying why there is none.
+fn report(names: &[String]) -> std::io::Result<String> {
     let registry = registry::load()?;
     let mut records = Vec::new();
     for name in names {
         records.push(tournament::load(name)?);
     }
-    let mut body = heading(&records, linked);
     if records.is_empty() {
-        body.push_str(&note(NO_TOURNAMENTS_NOTE));
-        return Ok(document(&body));
+        return Ok(note(NO_TOURNAMENTS_NOTE));
     }
 
     let mut played = Vec::new();
@@ -581,9 +672,9 @@ pub(crate) fn page(names: &[String], linked: bool) -> std::io::Result<String> {
         played.extend(played_runs(index, record, &registry)?);
     }
     if played.is_empty() {
-        body.push_str(&note(NO_ROUNDS_NOTE));
-        return Ok(document(&body));
+        return Ok(note(NO_ROUNDS_NOTE));
     }
+    let mut body = String::new();
 
     let by_model = grouped(&played, model_key);
     let by_agent = grouped(&played, agent_key);
@@ -713,7 +804,7 @@ pub(crate) fn page(names: &[String], linked: bool) -> std::io::Result<String> {
         ("harness efficiency", &harnesses),
     ]));
 
-    Ok(document(&body))
+    Ok(body)
 }
 
 /// The name of the report over `names` as a file.
@@ -728,30 +819,8 @@ pub(crate) fn file_name(names: &[String]) -> String {
     name
 }
 
-/// The title of the report, the tournaments it spans and when it was
-/// rendered, with the link to itself as a file when `linked`.
-fn heading(records: &[ava_wire::Tournament], linked: bool) -> String {
-    let names: Vec<String> = records.iter().map(|record| record.name.clone()).collect();
-    let link = if linked && !names.is_empty() {
-        let query: Vec<String> = names
-            .iter()
-            .map(|name| {
-                format!(
-                    "{}={}",
-                    crate::serve::TOURNAMENT_FIELD,
-                    crate::serve::urlencode(name)
-                )
-            })
-            .collect();
-        format!(
-            "<a class=\"{}\" href=\"/report?{}&{}=on\">{DOWNLOAD_LABEL}</a>",
-            views::LINK_CLASSES,
-            query.join("&"),
-            crate::serve::DOWNLOAD_FIELD
-        )
-    } else {
-        String::new()
-    };
+/// The title of the file, the tournaments it spans and when it was rendered.
+fn heading(names: &[String]) -> String {
     let over = if names.is_empty() {
         String::new()
     } else {
@@ -759,7 +828,7 @@ fn heading(records: &[ava_wire::Tournament], linked: bool) -> String {
     };
 
     format!(
-        "<div class=\"{HEADING_ROW_CLASSES}\"><span class=\"{HEADING_CLASSES}\">{TITLE}</span><span class=\"grow\"></span>{link}</div>\
+        "<div class=\"{HEADING_ROW_CLASSES}\"><span class=\"{HEADING_CLASSES}\">{TITLE}</span></div>\
          <p class=\"{SUBTITLE_CLASSES}\">{over}rendered {}</p>",
         usage::utc_date(usage::epoch_now())
     )

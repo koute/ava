@@ -105,9 +105,6 @@ const NO_RUN_YET: &str = "-";
 const PENDING_STATE: &str = "pending";
 const NO_LIMITS_NOTE: &str = "no backend reported its limits";
 const NO_TOURNAMENTS_NOTE: &str = "no tournaments yet, open one above";
-const REPORT_CHECKBOX_CLASSES: &str = "h-4 w-4 rounded accent-indigo-500 align-middle";
-const REPORT_TOOLTIP: &str = "a document of how the agents did in the checked tournaments against \
-     the tokens and the seconds they spent, standing on its own once saved";
 const NO_SEATS_NOTE: &str = "no seats yet, seat an agent below";
 
 /// The names the script keeps the sort of a table under.
@@ -500,6 +497,7 @@ const NO_ANALYST: &str = "none";
 const RUNS_SECTION: (&str, &str) = ("runs", "/");
 const TOURNAMENTS_SECTION: (&str, &str) = ("tournaments", "/tournaments");
 const SCOREBOARD_SECTION: (&str, &str) = ("scoreboard", "/scoreboard");
+pub(crate) const REPORTS_SECTION: (&str, &str) = ("reports", "/reports");
 const AGENTS_SECTION: (&str, &str) = ("agents", "/agents");
 const GAMES_SECTION: (&str, &str) = ("games", "/games");
 const SETUP_SECTION: (&str, &str) = ("setup", "/setup");
@@ -2118,7 +2116,7 @@ fn logo_path(name: &str) -> Option<std::path::PathBuf> {
 }
 
 /// The logo of a game as a table cell, empty for a game without one.
-fn logo_cell(game: &str) -> String {
+pub(crate) fn logo_cell(game: &str) -> String {
     if logo_path(game).is_none() {
         return String::new();
     }
@@ -2235,11 +2233,6 @@ pub(crate) fn tournaments_page(notice: &Notice, selection: &Selection) -> std::i
         .iter()
         .map(|record| {
             vec![
-                format!(
-                    "<input type=\"checkbox\" name=\"{}\" value=\"{}\" class=\"{REPORT_CHECKBOX_CLASSES}\">",
-                    crate::serve::TOURNAMENT_FIELD,
-                    escape(&record.name)
-                ),
                 logo_cell(&record.game),
                 format!(
                     "<a class=\"{LINK_CLASSES}\" href=\"/tournament/{name}\">{name}</a><div class=\"text-xs {MUTED_CLASSES} mt-0.5\">opened {} ago</div>",
@@ -2258,20 +2251,15 @@ pub(crate) fn tournaments_page(notice: &Notice, selection: &Selection) -> std::i
 
     body.push_str("<div data-refresh=\"tournaments\">");
     body.push_str(&notice.render());
-    // The boxes pick the tournaments of a report, and the script keeps them
-    // checked across a refresh.
     body.push_str(&format!(
-        "<p class=\"{TITLE_CLASSES}\">tournaments</p>\
-         <form method=\"get\" action=\"/report\" target=\"_blank\">{}\
-         <div class=\"flex justify-end mt-3\"><button class=\"{BUTTON_CLASSES} {CONTROL_HEIGHT}\" title=\"{}\">report</button></div></form>",
+        "<p class=\"{TITLE_CLASSES}\">tournaments</p>{}",
         table(
             &[
-                "^", "", "name", "state", "game", "#seats", "#rounds", "*seconds", "#combats"
+                "", "name", "state", "game", "#seats", "#rounds", "*seconds", "#combats"
             ],
             rows,
             Some(NO_TOURNAMENTS_NOTE),
-        ),
-        escape(REPORT_TOOLTIP)
+        )
     ));
     body.push_str("</div>");
 
@@ -5371,7 +5359,7 @@ fn render_table(
 
 /// The layout around one rendered `body`, headed by the `trail` leading to it.
 /// Every step but the last links to where it names.
-fn page(trail: &[(&str, &str)], body: &str) -> String {
+pub(crate) fn page(trail: &[(&str, &str)], body: &str) -> String {
     let steps: String = trail
         .iter()
         .enumerate()

@@ -101,6 +101,9 @@ tournaments</a>
 <a href="/scoreboard" class="flex items-center gap-2.5 rounded-md px-3 py-2 text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800/60 transition-colors">
 <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V11M10 20V4M16 20v-7M3 20h18"/></svg>
 scoreboard</a>
+<a href="/reports" class="flex items-center gap-2.5 rounded-md px-3 py-2 text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800/60 transition-colors">
+<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/><path d="M10 17v-4M14 17v-7"/></svg>
+reports</a>
 <a href="/agents" class="flex items-center gap-2.5 rounded-md px-3 py-2 text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800/60 transition-colors">
 <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M3 19a6 6 0 0 1 12 0"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.5A4.5 4.5 0 0 1 21 19"/></svg>
 agents</a>
@@ -139,15 +142,6 @@ function retired() {
     return address.pathname + address.search;
 }
 
-/* The boxes of `region` by their name and value, whether each is checked. */
-function checks(region) {
-    const state = new Map();
-    for (const box of region.querySelectorAll("input[type=checkbox]")) {
-        state.set(`${box.name}=${box.value}`, box.checked);
-    }
-    return state;
-}
-
 /* The open state of every named fold in `region`, by its name. */
 function folds(region) {
     const state = new Map();
@@ -176,17 +170,10 @@ async function refresh() {
             continue;
         }
         const state = folds(region);
-        const checked = checks(region);
         region.replaceChildren(...update.childNodes);
         for (const fold of region.querySelectorAll("details[data-fold]")) {
             if (state.has(fold.dataset.fold)) {
                 fold.open = state.get(fold.dataset.fold);
-            }
-        }
-        for (const box of region.querySelectorAll("input[type=checkbox]")) {
-            const key = `${box.name}=${box.value}`;
-            if (checked.has(key)) {
-                box.checked = checked.get(key);
             }
         }
     }
