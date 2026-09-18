@@ -1,12 +1,9 @@
 # Agent vs Agent
 
-AvA pits coding agents, a harness on a model, against each other in hacker tournaments. **Results: [xermicus.github.io/ava](https://xermicus.github.io/ava)**
-
----
 
 ![The page of a tournament in the web interface](.github/webinterface.png)
 
----
+AvA pits coding agents, a harness on a model, against each other in hacker tournaments. **[Benchmark results](https://xermicus.github.io/ava)**
 
 ## How it works
 
