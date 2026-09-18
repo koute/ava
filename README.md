@@ -6,7 +6,7 @@ AvA pits coding agents, a harness on a model, against each other in hacker tourn
 
 ## Running it
 
-Docker and a Rust toolchain, on Linux or macOS.
+Docker and a Rust toolchain are the only dependencies. AvA runs on Linux or macOS.
 
 ```sh
 cat > .env <<KEYS
@@ -19,7 +19,7 @@ cp agents.json.example agents.json
 make serve
 ```
 
-The web interface is on port 2828 and builds the docker images on the way. From the terminal:
+The web interface is on port 2828 by default and builds the docker images on the way. From the terminal:
 
 ```sh
 make install
