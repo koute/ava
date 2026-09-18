@@ -234,8 +234,8 @@ const MODELS_TABLE: &str = "report-models";
 const TOURNAMENTS_TABLE: &str = "report-tournaments";
 const HARNESSES_TABLE: &str = "report-harnesses";
 const OVERALL_HEADER: &str = "#overall|the share of the rounds against other agents won over every chosen tournament, half for a draw";
-const COST_PER_SUCCESS_HEADER: &str = "#cost per passing run|the dollars of its runs at the prices of the registry over the runs a push of which passed the verifier";
-const TOKENS_PER_SUCCESS_HEADER: &str = "#tokens per passing run|the tokens through the backend over the runs a push of which passed the verifier";
+const COST_PER_SUCCESS_HEADER: &str = "#avg spent per pass|the dollars of all its runs at the prices of the registry, divided by the runs a push of which passed the verifier";
+const TOKENS_PER_SUCCESS_HEADER: &str = "#avg tokens per pass|the tokens through the backend over all its runs, divided by the runs a push of which passed the verifier";
 /// The column of the tournaments table holding the overall score.
 const OVERALL_COLUMN: usize = 1;
 /// The columns of the table, after the model.

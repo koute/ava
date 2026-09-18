@@ -1,5 +1,7 @@
-.PHONY: book clippy doc fmt install report serve test test-book
+.PHONY: book clippy doc fmt install push-report serve test test-book
 
+PAGES ?= ../ava-pages
+REPORT ?= reports/report.html
 
 book: test-book
 	mdbook serve book --open
@@ -16,8 +18,10 @@ fmt:
 install:
 	cargo install --path crates/ava --locked --force
 
-report: install
-	ava report -p max -n tcc-parity-max -n chess-parity-max -n r2wars-parity-max -p high -n tcc-parity -n chess-parity -n r2wars-parity
+push-report:
+	cp $(REPORT) $(PAGES)/index.html
+	git -C $(PAGES) commit -am "report $$(date -u +%F)"
+	git -C $(PAGES) push
 
 serve: install
 	ava image
