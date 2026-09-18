@@ -2315,9 +2315,11 @@ fn resume_forms(name: &str, number: usize) -> String {
 /// keeps the sheet it was first served across its refreshes, since the choice
 /// is not something the records hold.
 fn sprite_sheet() -> String {
+    // Microseconds, since a clock ticking in microseconds leaves the
+    // nanoseconds a multiple of 1000, which always lands on the same sheet.
     let since = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|since| since.subsec_nanos() as usize)
+        .map(|since| since.as_micros() as usize)
         .unwrap_or_default();
     let (sheet, _) = crate::serve::SPRITES[since % crate::serve::SPRITES.len()];
 

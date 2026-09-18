@@ -1,2 +1,11 @@
 #!/bin/sh
+# Anything but `--fight` starts the tournament server, which never returns.
+if [ "$1" != "--fight" ]; then
+	echo "usage: r2wars --fight <warrior.asm> <warrior.asm>"
+	echo "plays one combat and prints every round; exit 0 for a played combat, 1 for a warrior that does not assemble, 2 for bad usage"
+	case "$1" in
+		-h|--help) exit 0 ;;
+	esac
+	exit 2
+fi
 exec dotnet /opt/r2wars/bin/r2wars.dll "$@"

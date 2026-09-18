@@ -37,13 +37,13 @@ The home outlives the sandbox, which is what makes the last call possible.
 
 It is also the portable way to get all three. The volume and its tmpfs are created by the docker daemon, so on macOS this happens inside its linux virtual machine and behaves exactly as it does on linux. Nothing here needs a host ramdisk, a loop device, a filesystem quota or root on the host.
 
-The cost is that the home is memory. A run holds the copied home for its whole length, the base image with the harness and the toolchains of the game on top, so `-j` multiplies it and the ceiling of 4 GiB of home plus 4 GiB of workspace plus 2 GiB of scratch is per run.
+The cost is that the home is memory. A run holds its home for its whole length, so `-j` multiplies it and the ceiling of 4 GiB of home plus 4 GiB of workspace plus 2 GiB of scratch is per run. This is why the harness and the toolchains are installed into the image outside the home: the image is shared by every sandbox on the host and cached once, where a copy in every home costs each run the better part of a gigabyte of memory.
 
 The workspace is split off because the two sides fail differently. A tool call whose output never ends is what fills a filesystem here, and the harness writes that output into its own session store under the home. With one volume that took the workspace with it, and the last chance could not commit, so the run recorded nothing at all. With two, a full home costs the harness its session and leaves the submission untouched. The workspace is the side that has to keep working, since git writes to commit, so it is not sized to absorb anything beyond the task. For the same reason the git identity travels in the environment instead of `$HOME/.gitconfig`: writing that file is the first thing the bridge does, and on a full home it aborts before reaching git at all.
 
 A single file is capped at half the smaller volume through `RLIMIT_FSIZE`, so one runaway write dies of `SIGXFSZ` rather than filling a tmpfs. It bounds one file and not a total, which is the shape of what has actually gone wrong.
 
-Two details follow from overmounting a directory the image installs into. The volume is not populated from the image on its own, so `ava` copies the image home in before the agent starts, harness and toolchains included; the size has to cover that copy on top of what the harness writes. And a tmpfs is torn down once the last container using it exits, so a holder container keeps both mounted for the whole run.
+Two details follow from overmounting a directory the image installs into. The volume is not populated from the image on its own, so `ava` copies the image home in before the agent starts, which is the configuration of the harness and little else. And a tmpfs is torn down once the last container using it exits, so a holder container keeps both mounted for the whole run.
 
 Everything else the agent could write to is closed off. The root filesystem is read only, which holds against the passwordless `sudo` in the image because the container has no `CAP_SYS_ADMIN` to remount it. `/tmp` is a small tmpfs of its own and no restart carries it over.
 

@@ -52,19 +52,20 @@ RUN sed -i -E "s/ ALL$/ NOPASSWD: ALL/g" /etc/sudoers && \
 RUN sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \
 	locale-gen
 
+# The toolchain stays in the image, the home is copied into memory for every run.
+ENV RUSTUP_HOME="/usr/local/rustup"
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | CARGO_HOME=/usr/local/cargo sh -s -- -y \
+	--profile minimal \
+	--component clippy,rustfmt \
+	--default-toolchain 1.98.0 \
+	--no-modify-path
+
 USER agent
 WORKDIR /home/agent
 
 ENV AGENT_HOME="/home/agent"
-ENV PATH="${AGENT_HOME}/.local/bin:${AGENT_HOME}/.cargo/bin:${PATH}"
-
-# The minimal profile leaves out rust-docs, which is over half of the agent
-# home on its own and useless to a sandbox with no browser and no network. The
-# home is copied into a memory backed volume for every run, so its size is RAM.
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
-	--profile minimal \
-	--component clippy,rustfmt \
-	--default-toolchain 1.98.0
+ENV CARGO_HOME="${AGENT_HOME}/.cargo"
+ENV PATH="${AGENT_HOME}/.local/bin:${AGENT_HOME}/.cargo/bin:/usr/local/cargo/bin:${PATH}"
 
 RUN mkdir -p ${AGENT_HOME}/workspace
 
