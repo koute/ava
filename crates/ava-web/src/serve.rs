@@ -85,8 +85,8 @@ pub(crate) const DOWNLOAD_FIELD: &str = "download";
 const TEXT_CONTENT_TYPE: &str = "text/plain; charset=utf-8";
 const BINARY_CONTENT_TYPE: &str = "application/octet-stream";
 const JAVASCRIPT_CONTENT_TYPE: &str = "text/javascript";
-const FONT_CONTENT_TYPE: &str = "font/woff2";
-const SPRITE_CONTENT_TYPE: &str = "image/png";
+pub(crate) const FONT_CONTENT_TYPE: &str = "font/woff2";
+pub(crate) const SPRITE_CONTENT_TYPE: &str = "image/png";
 
 /// A form submission larger than this is not one of ours.
 const MAX_FORM_BYTES: u64 = 16 * 1024;

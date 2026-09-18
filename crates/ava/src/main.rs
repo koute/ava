@@ -24,6 +24,7 @@ fn main() {
         Some(arguments::SubCommand::Analyze(ref command)) => ava_run::docker::analyze(command),
         Some(arguments::SubCommand::Score(ref command)) => ava_scorer::score::run(command),
         Some(arguments::SubCommand::Serve(ref command)) => ava_web::serve::run(command),
+        Some(arguments::SubCommand::Report(ref command)) => ava_web::report::run(command),
         Some(arguments::SubCommand::Remote(ref command)) => ava_scorer::remote::run(command),
         Some(arguments::SubCommand::Upstreams(ref command)) => ava_run::upstreams::run(command),
         Some(arguments::SubCommand::Tournament(ref command)) => ava_run::tournament::run(command),

@@ -2,6 +2,6 @@
 
 mod chart;
 mod chat;
-mod report;
+pub mod report;
 pub mod serve;
 mod views;

@@ -1,18 +1,73 @@
 //! The report over chosen tournaments: how every agent did against the
-//! tokens and the seconds it spent, as one document standing on its own,
-//! the styles and the fonts inside it, so it reads the same saved as served.
+//! tokens and the seconds it spent, and every chosen tournament as its page
+//! shows it, as one document standing on its own, the styles, the fonts and
+//! the images inside it and the pages of the agents and the runs behind their
+//! links, so it reads the same saved as served.
 
 use crate::{chart, views};
 use ava_run::{docker, registry, runs, tournament, usage};
 
-const TITLE: &str = "report";
+/// The directory the reports are written into unless another is named.
+pub const DEFAULT_DIRECTORY: &str = "reports";
+
+/// The report command: the report over tournaments as a file.
+#[derive(Debug)]
+pub struct Report {
+    /// The tournaments of the report, every tournament on disk when empty.
+    pub names: Vec<String>,
+    /// The directory the file is written into.
+    pub directory: std::path::PathBuf,
+}
+
+impl Default for Report {
+    fn default() -> Self {
+        Self {
+            names: Vec::new(),
+            directory: DEFAULT_DIRECTORY.into(),
+        }
+    }
+}
+
+/// Write the report of `command` into its directory and print the path. The
+/// file is named after the tournaments named, `report.html` when it spans
+/// every tournament on disk.
+pub fn run(command: &Report) -> std::io::Result<i32> {
+    let names = if command.names.is_empty() {
+        tournament::list()?
+            .into_iter()
+            .map(|record| record.name)
+            .collect()
+    } else {
+        command.names.clone()
+    };
+    std::fs::create_dir_all(&command.directory)?;
+    let path = command.directory.join(file_name(&command.names));
+    std::fs::write(&path, file(&names)?)?;
+    println!("{}", path.display());
+
+    Ok(0)
+}
+
+const TITLE: &str = "Agent vs Agent";
+const SUBTITLE: &str = "report rendered at";
+/// The pages of the agents and the runs the file carries: each hidden until
+/// a link makes it the target of the address, which hides the report itself.
+const PAGES_CLASS: &str = "report-pages";
+const FRONT_CLASS: &str = "report-front";
+const PAGE_CLASS: &str = "report-page";
+const PAGE_TRAIL_CLASSES: &str = "text-base font-semibold text-neutral-100 truncate mb-6";
+/// The address of no page at all, leading back to the report.
+const BACK_ADDRESS: &str = "#";
+const RUN_ADDRESS_PREFIX: &str = "/run/";
+const AGENT_ADDRESS_PREFIX: &str = "/agent/";
+const RUN_ID_PREFIX: &str = "run-";
+const AGENT_ID_PREFIX: &str = "agent-";
 const HEAD_END: &str = "</head>";
 /// The tag of the layout loading the styles from the server, replaced by
 /// the styles themselves.
 const TAILWIND_TAG: &str = "<script src=\"/assets/tailwind.js\"></script>";
 /// Where the layout loads the fonts from, replaced by the fonts themselves.
 const FONT_ADDRESS_PREFIX: &str = "/assets/fonts/";
-const FONT_DATA_PREFIX: &str = "data:font/woff2;base64,";
 const BODY_CLASSES: &str = "bg-neutral-950 text-neutral-200 font-sans text-sm antialiased";
 const MAIN_CLASSES: &str = "w-full px-6 py-6";
 const HEADING_CLASSES: &str = "text-lg font-semibold text-neutral-100";
@@ -581,18 +636,86 @@ fn grouped_by_harness(played: &[Played]) -> Vec<Group> {
 /// over the chosen ones under them.
 pub(crate) fn page(names: &[String]) -> std::io::Result<String> {
     let mut body = chooser(names)?;
-    body.push_str(&report(names)?);
+    body.push_str(&report(&records(names)?)?);
 
     Ok(views::page(&[views::REPORTS_SECTION], &body))
 }
 
 /// The report over the tournaments `names` as a file of its own, headed by
-/// what it spans and when it was rendered.
+/// the title and when it was rendered, with the pages of the agents seated in
+/// them and of the runs played in them behind their links.
 pub(crate) fn file(names: &[String]) -> std::io::Result<String> {
-    let mut body = heading(names);
-    body.push_str(&report(names)?);
+    let records = records(names)?;
+    let registry = registry::load()?;
+    let mut front = heading();
+    front.push_str(&report(&records)?);
+    let mut body = format!("<div class=\"{FRONT_CLASS}\">{front}</div>");
 
-    Ok(document(&body))
+    let mut agents: Vec<String> = records
+        .iter()
+        .flat_map(|record| views::seated_agents(record, &registry))
+        .collect();
+    agents.sort();
+    agents.dedup();
+    let mut runs = views::tournament_runs(names)?;
+    runs.sort();
+    for agent in &agents {
+        body.push_str(&subpage(
+            AGENT_ID_PREFIX,
+            agent,
+            &views::agent_report(agent)?,
+        ));
+    }
+    for run in &runs {
+        body.push_str(&subpage(RUN_ID_PREFIX, run, &views::run_report(run)?));
+    }
+    for (prefix, id_prefix, names) in [
+        (AGENT_ADDRESS_PREFIX, AGENT_ID_PREFIX, &agents),
+        (RUN_ADDRESS_PREFIX, RUN_ID_PREFIX, &runs),
+    ] {
+        for name in names {
+            let name = views::escape(name);
+            body = pointed_inside(
+                &body,
+                &format!("{prefix}{name}"),
+                &format!("{id_prefix}{name}"),
+            );
+        }
+    }
+    let body = format!(
+        "<div class=\"{PAGES_CLASS}\"><style>{}</style>{body}</div>",
+        page_rules()
+    );
+
+    Ok(document(&body, &views::games()?))
+}
+
+/// The records of the tournaments `names`.
+fn records(names: &[String]) -> std::io::Result<Vec<ava_wire::Tournament>> {
+    names.iter().map(|name| tournament::load(name)).collect()
+}
+
+/// The page of `name` as `body`, under the id of `prefix` and the name,
+/// headed by the trail back to the report.
+fn subpage(prefix: &str, name: &str, body: &str) -> String {
+    format!(
+        "<section id=\"{prefix}{}\" class=\"{PAGE_CLASS}\"><h1 class=\"{PAGE_TRAIL_CLASSES}\">{}</h1>{body}</section>",
+        views::escape(name),
+        views::steps(&[(TITLE, BACK_ADDRESS), (name, "")])
+    )
+}
+
+/// The rules showing the page the address targets in place of the report.
+fn page_rules() -> String {
+    format!(
+        ".{PAGE_CLASS}{{display:none}}.{PAGE_CLASS}:target{{display:block}}\
+         .{PAGES_CLASS}:has(.{PAGE_CLASS}:target)>.{FRONT_CLASS}{{display:none}}"
+    )
+}
+
+/// `body` with every link to `address` pointing at the page `id` inside the file.
+fn pointed_inside(body: &str, address: &str, id: &str) -> String {
+    body.replace(&format!("href=\"{address}\""), &format!("href=\"#{id}\""))
 }
 
 /// The chips choosing the tournaments of the report, every tournament on
@@ -656,13 +779,9 @@ fn query(names: &[String]) -> String {
         .join("&")
 }
 
-/// The report over the tournaments `names`, or the note saying why there is none.
-fn report(names: &[String]) -> std::io::Result<String> {
+/// The report over `records`, or the note saying why there is none.
+fn report(records: &[ava_wire::Tournament]) -> std::io::Result<String> {
     let registry = registry::load()?;
-    let mut records = Vec::new();
-    for name in names {
-        records.push(tournament::load(name)?);
-    }
     if records.is_empty() {
         return Ok(note(NO_TOURNAMENTS_NOTE));
     }
@@ -678,8 +797,8 @@ fn report(names: &[String]) -> std::io::Result<String> {
 
     let by_model = grouped(&played, model_key);
     let by_agent = grouped(&played, agent_key);
-    let mut tournaments = tournaments_table(&records, &played);
-    tournaments.push_str(&tournaments_chart(&records, &by_model, &played));
+    let mut tournaments = tournaments_table(records, &played);
+    tournaments.push_str(&tournaments_chart(records, &by_model, &played));
     tournaments.push_str(&harness_chart(&by_agent));
     let mut efficiency = group_table(&by_model, MODELS_TABLE, MODEL_HEADER, &COLUMNS);
     efficiency.push_str(&format!(
@@ -798,11 +917,18 @@ fn report(names: &[String]) -> std::io::Result<String> {
         ),
     ));
     harnesses.push_str(&pass_curve(&by_harness));
-    body.push_str(&tabs(&[
-        ("quality", &tournaments),
-        ("model efficiency", &efficiency),
-        ("harness efficiency", &harnesses),
-    ]));
+    let mut panes = vec![
+        ("quality", tournaments),
+        ("model efficiency", efficiency),
+        ("harness efficiency", harnesses),
+    ];
+    for record in records {
+        panes.push((
+            record.name.as_str(),
+            views::tournament_report(&record.name)?,
+        ));
+    }
+    body.push_str(&tabs(&panes));
 
     Ok(body)
 }
@@ -819,17 +945,11 @@ pub(crate) fn file_name(names: &[String]) -> String {
     name
 }
 
-/// The title of the file, the tournaments it spans and when it was rendered.
-fn heading(names: &[String]) -> String {
-    let over = if names.is_empty() {
-        String::new()
-    } else {
-        format!("over {}, ", views::escape(&names.join(", ")))
-    };
-
+/// The title of the file and when it was rendered.
+fn heading() -> String {
     format!(
         "<div class=\"{HEADING_ROW_CLASSES}\"><span class=\"{HEADING_CLASSES}\">{TITLE}</span></div>\
-         <p class=\"{SUBTITLE_CLASSES}\">{over}rendered {}</p>",
+         <p class=\"{SUBTITLE_CLASSES}\">{SUBTITLE} {}</p>",
         usage::utc_date(usage::epoch_now())
     )
 }
@@ -988,7 +1108,7 @@ fn variance_shares(
 /// `panes`, each a title and its content, as tabs: a row of the titles and
 /// the content of the chosen one under it, the first to begin with. The tabs
 /// are radio buttons, so the file needs no script to switch them.
-fn tabs(panes: &[(&str, &String)]) -> String {
+fn tabs(panes: &[(&str, String)]) -> String {
     let mut row = String::new();
     let mut content = String::new();
     let mut rules = String::new();
@@ -1249,10 +1369,7 @@ fn tournaments_chart(
             .enumerate()
             .filter_map(|(index, record)| {
                 let (logo, kind) = views::game_logo(&record.game)?;
-                Some((
-                    index as f64,
-                    format!("data:{kind};base64,{}", base64(&logo)),
-                ))
+                Some((index as f64, data_uri(kind, &logo)))
             })
             .collect(),
     };
@@ -1330,9 +1447,10 @@ fn efficiency_chart(
 }
 
 /// The whole document around `body`: the head of the layout with the styles
-/// and the fonts inside it in place of their addresses, and the script
+/// and the fonts inside it in place of their addresses, the sprite sheets and
+/// the logos of `games` inside the body in place of theirs, and the script
 /// sorting the tables, so nothing is fetched from the server.
-fn document(body: &str) -> String {
+fn document(body: &str, games: &[String]) -> String {
     let (head, _) = views::LAYOUT_TEMPLATE
         .split_once(HEAD_END)
         .expect("the layout has a head");
@@ -1340,18 +1458,39 @@ fn document(body: &str) -> String {
     for (name, bytes) in crate::serve::FONTS {
         head = head.replace(
             &format!("{FONT_ADDRESS_PREFIX}{name}"),
-            &format!("{FONT_DATA_PREFIX}{}", base64(bytes)),
+            &data_uri(crate::serve::FONT_CONTENT_TYPE, bytes),
         );
     }
     let head = head.replace(
         TAILWIND_TAG,
         &format!("<script>{}</script>", crate::serve::TAILWIND),
     );
+    let mut body = body.to_string();
+    for (name, bytes) in crate::serve::SPRITES {
+        body = body.replace(
+            &format!("{}{name}", crate::serve::SPRITE_PATH),
+            &data_uri(crate::serve::SPRITE_CONTENT_TYPE, bytes),
+        );
+    }
+    for game in games {
+        let address = views::logo_address(game);
+        if !body.contains(&address) {
+            continue;
+        }
+        if let Some((logo, kind)) = views::game_logo(game) {
+            body = body.replace(&address, &data_uri(kind, &logo));
+        }
+    }
 
     format!(
         "{head}{HEAD_END}<body class=\"{BODY_CLASSES}\"><main class=\"{MAIN_CLASSES}\">{body}</main><script>{}</script></body></html>",
         crate::serve::TABLE_SORT
     )
+}
+
+/// `bytes` of the content type `kind` as an address carrying them.
+fn data_uri(kind: &str, bytes: &[u8]) -> String {
+    format!("data:{kind};base64,{}", base64(bytes))
 }
 
 /// `label` with `title` behind its hover.
@@ -1512,13 +1651,29 @@ mod tests {
     }
 
     #[test]
+    fn links_point_inside_the_file() {
+        let body = "<a href=\"/run/x\">x</a><a href=\"/run/x/run.json\">run.json</a><a href=\"/run/xy\">xy</a>";
+
+        assert_eq!(
+            super::pointed_inside(body, "/run/x", "run-x"),
+            "<a href=\"#run-x\">x</a><a href=\"/run/x/run.json\">run.json</a><a href=\"/run/xy\">xy</a>"
+        );
+    }
+
+    #[test]
     fn the_document_fetches_nothing_from_the_server() {
-        let document = super::document("<p>body</p>");
+        let (sheet, _) = crate::serve::SPRITES[0];
+        let body = format!(
+            "<p>body</p><span style=\"background-image:url('{}{sheet}')\"></span>",
+            crate::serve::SPRITE_PATH
+        );
+        let document = super::document(&body, &[]);
 
         assert!(document.starts_with("<!doctype html>"));
         assert!(document.contains("data:font/woff2;base64,"));
+        assert!(document.contains("url('data:image/png;base64,"));
         assert!(!document.contains("/assets/"));
-        assert!(document.contains("<title>report"));
+        assert!(document.contains("<title>Agent vs Agent"));
         assert!(document.contains("table[data-sortable]"));
         assert!(document.ends_with("</html>"));
     }

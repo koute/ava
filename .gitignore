@@ -9,4 +9,5 @@ __pycache__
 /agents.json
 /agents.json.tmp
 /docs
+/reports
 /.DS_Store

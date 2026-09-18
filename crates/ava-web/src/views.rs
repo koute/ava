@@ -1371,16 +1371,49 @@ fn option(text: &str, attributes: &str, selected: bool) -> String {
 /// One run: its state and figures first, the entries, the pushes, the console,
 /// then the rest.
 pub(crate) fn run_page(name: &str, notice: &Notice) -> std::io::Result<String> {
+    let (trail, body) = run_body(name, notice, Rendering::Page)?;
+    let trail: Vec<(&str, &str)> = trail
+        .iter()
+        .map(|(label, address)| (label.as_str(), address.as_str()))
+        .collect();
+
+    Ok(page(&trail, &body))
+}
+
+/// The run `name` as its page shows it, for a report: without the forms
+/// stopping and analyzing it, the chat of a live run and the refreshed region.
+pub(crate) fn run_report(name: &str) -> std::io::Result<String> {
+    let notice = Notice {
+        started: None,
+        refused: None,
+    };
+
+    run_body(name, &notice, Rendering::Report).map(|(_, body)| body)
+}
+
+/// The trail and the body of the page of the run `name`, its forms and
+/// refreshed region as `rendering` asks.
+fn run_body(
+    name: &str,
+    notice: &Notice,
+    rendering: Rendering,
+) -> std::io::Result<(Vec<(String, String)>, String)> {
+    let controls = rendering == Rendering::Page;
     let directory = run_directory(name)?;
     let run = runs::read(&directory)?;
     let entry = RunEntry::new(&directory, run, &live_runs(), &tournament::placements()?);
 
     let mut body = format!(
-        "<div data-refresh=\"run\"><div class=\"flex items-center gap-3\">\
+        "<div{}><div class=\"flex items-center gap-3\">\
          <span class=\"text-lg font-semibold text-neutral-100 {MONO_CLASSES}\">{}</span>{}{}</div>",
+        rendering.region("run"),
         escape(name),
         entry.state(),
-        entry.stop_form()
+        if controls {
+            entry.stop_form()
+        } else {
+            String::new()
+        }
     );
     body.push_str(&notice.render());
 
@@ -1549,7 +1582,7 @@ pub(crate) fn run_page(name: &str, notice: &Notice) -> std::io::Result<String> {
     ]);
     body.push_str(&tiles(&facts));
 
-    if entry.live {
+    if entry.live && controls {
         body.push_str(&chat_panel(name, &title));
     }
 
@@ -1577,7 +1610,7 @@ pub(crate) fn run_page(name: &str, notice: &Notice) -> std::io::Result<String> {
             },
         }
         }
-        if !entry.analyzing() {
+        if controls && !entry.analyzing() {
             body.push_str(&analysis_panel(name)?);
         }
     }
@@ -1675,22 +1708,20 @@ pub(crate) fn run_page(name: &str, notice: &Notice) -> std::io::Result<String> {
     ));
     body.push_str("</div>");
 
-    let played_in = entry.placement.as_ref().map(|placement| {
-        (
-            &placement.tournament,
-            format!("/tournament/{}", placement.tournament),
-        )
-    });
-    let trail = match &played_in {
-        Some((tournament, address)) => vec![
-            TOURNAMENTS_SECTION,
-            (tournament.as_str(), address.as_str()),
-            (name, ""),
+    let step = |(label, address): (&str, &str)| (label.to_string(), address.to_string());
+    let trail = match &entry.placement {
+        Some(placement) => vec![
+            step(TOURNAMENTS_SECTION),
+            (
+                placement.tournament.clone(),
+                format!("/tournament/{}", placement.tournament),
+            ),
+            step((name, "")),
         ],
-        None => vec![RUNS_SECTION, (name, "")],
+        None => vec![step(RUNS_SECTION), step((name, ""))],
     };
 
-    Ok(page(&trail, &body))
+    Ok((trail, body))
 }
 
 /// The agents over the tournaments: the runs of each and its ratings over the
@@ -2096,9 +2127,14 @@ fn cover(game: &str) -> String {
     }
 
     format!(
-        "<span class=\"{COVER_CLASSES}\"><img class=\"{COVER_IMAGE_CLASSES}\" src=\"/games/{}/logo\" alt=\"\"></span>",
-        escape(game)
+        "<span class=\"{COVER_CLASSES}\"><img class=\"{COVER_IMAGE_CLASSES}\" src=\"{}\" alt=\"\"></span>",
+        logo_address(game)
     )
+}
+
+/// The address the interface serves the logo of `game` at.
+pub(crate) fn logo_address(game: &str) -> String {
+    format!("/games/{}/logo", escape(game))
 }
 
 /// The logo of the game `name` in its folder, for a name the games directory
@@ -2122,8 +2158,8 @@ pub(crate) fn logo_cell(game: &str) -> String {
     }
 
     format!(
-        "<img class=\"{LOGO_CELL_CLASSES}\" src=\"/games/{}/logo\" alt=\"\">",
-        escape(game)
+        "<img class=\"{LOGO_CELL_CLASSES}\" src=\"{}\" alt=\"\">",
+        logo_address(game)
     )
 }
 
@@ -2379,12 +2415,56 @@ fn tournament_state(record: &ava_wire::Tournament) -> String {
     }
 }
 
+/// Where a tournament is rendered: on its page, with the forms playing and
+/// seating it and the regions the interface refreshes, or in a report, which
+/// shows what the page shows and changes nothing.
+#[derive(Clone, Copy, PartialEq)]
+enum Rendering {
+    Page,
+    Report,
+}
+
+impl Rendering {
+    /// The attribute marking `region` for the refresh, on the page alone.
+    fn region(self, region: &str) -> String {
+        match self {
+            Self::Page => format!(" data-refresh=\"{region}\""),
+            Self::Report => String::new(),
+        }
+    }
+}
+
 /// One tournament: its lobby, its standings and every round it played.
 pub(crate) fn tournament_page(
     name: &str,
     notice: &Notice,
     selection: &Selection,
 ) -> std::io::Result<String> {
+    let body = tournament_body(name, notice, selection, Rendering::Page)?;
+
+    Ok(page(&[TOURNAMENTS_SECTION, (name, "")], &body))
+}
+
+/// The tournament `name` as its page shows it, for a report: without the
+/// forms playing and seating it and without the regions the interface refreshes.
+pub(crate) fn tournament_report(name: &str) -> std::io::Result<String> {
+    let notice = Notice {
+        started: None,
+        refused: None,
+    };
+
+    tournament_body(name, &notice, &Selection::default(), Rendering::Report)
+}
+
+/// The body of the page of the tournament `name`, its forms and refreshed
+/// regions as `rendering` asks.
+fn tournament_body(
+    name: &str,
+    notice: &Notice,
+    selection: &Selection,
+    rendering: Rendering,
+) -> std::io::Result<String> {
+    let controls = rendering == Rendering::Page;
     let record = tournament::load(name)?;
     let playing = tournament::playing(name);
     let running = live_runs();
@@ -2392,7 +2472,7 @@ pub(crate) fn tournament_page(
     let game = ava_game::find(&record.game);
 
     let unplayed = tournament::unplayed_rounds(&record).len();
-    let backfill_form = if playing || unplayed == 0 {
+    let backfill_form = if !controls || playing || unplayed == 0 {
         String::new()
     } else {
         format!(
@@ -2406,7 +2486,7 @@ pub(crate) fn tournament_page(
         )
     };
 
-    let play_form = if playing || record.seats.is_empty() || unplayed > 0 {
+    let play_form = if !controls || playing || record.seats.is_empty() || unplayed > 0 {
         String::new()
     } else {
         format!(
@@ -2431,8 +2511,9 @@ pub(crate) fn tournament_page(
     // survives the refresh.
     let mut body = format!(
         "<div class=\"flex items-center gap-3\">\
-         <span class=\"text-lg font-semibold text-neutral-100 {MONO_CLASSES}\">{}</span><span data-refresh=\"state\">{}</span><span class=\"grow\"></span>{backfill_form}{play_form}</div>",
+         <span class=\"text-lg font-semibold text-neutral-100 {MONO_CLASSES}\">{}</span><span{}>{}</span><span class=\"grow\"></span>{backfill_form}{play_form}</div>",
         escape(name),
+        rendering.region("state"),
         tournament_state(&record),
     );
     body.push_str(&notice.render());
@@ -2460,7 +2541,8 @@ pub(crate) fn tournament_page(
                     .is_some_and(|placement| placement.tournament == name)
         });
     body.push_str(&format!(
-        "<div data-refresh=\"about\" class=\"{ABOUT_GRID_CLASSES}\">{}{}</div>",
+        "<div{} class=\"{ABOUT_GRID_CLASSES}\">{}{}</div>",
+        rendering.region("about"),
         game_card(&record.game, &played),
         tournament_card(&record, at_work)
     ));
@@ -2525,7 +2607,7 @@ pub(crate) fn tournament_page(
                     Some((peak, _)) => peak.to_string(),
                     None => String::new(),
                 },
-                if !playing && !tournament::seat_is_held(&record, seat) {
+                if controls && !playing && !tournament::seat_is_held(&record, seat) {
                     format!(
                         "<form method=\"post\" action=\"/tournament/{}/unseat\"><input type=\"hidden\" name=\"seat\" value=\"{seat}\"><button class=\"{STOP_CLASSES}\">remove</button></form>",
                         escape(name)
@@ -2558,7 +2640,8 @@ pub(crate) fn tournament_page(
     headers.extend(STANDINGS_HEADERS.map(str::to_string));
     let headers: Vec<&str> = headers.iter().map(String::as_str).collect();
     body.push_str(&format!(
-        "<div data-refresh=\"lobby\"><p class=\"{TITLE_CLASSES}\">{}</p>{}</div>",
+        "<div{}><p class=\"{TITLE_CLASSES}\">{}</p>{}</div>",
+        rendering.region("lobby"),
         explained(
             "standings",
             "the seats of the tournament, joining between rounds and fixed once a round was played, their rounds against each other over the finished rounds, and their ratings over the matches between different agents, a harness on a model"
@@ -2571,7 +2654,7 @@ pub(crate) fn tournament_page(
             Some(NO_SEATS_NOTE)
         )
     ));
-    if joinable {
+    if controls && joinable {
         body.push_str(&format!(
             "<form method=\"post\" action=\"/tournament/{}/seat\" data-submit class=\"{CARD_CLASSES} border-t-0 rounded-t-none p-4 flex flex-wrap items-end gap-4\">\
              {}<button class=\"{BUTTON_CLASSES} {CONTROL_HEIGHT}\">seat</button></form>",
@@ -2587,7 +2670,7 @@ pub(crate) fn tournament_page(
         .unwrap_or_default();
     // The region is there before the first round finishes, so the refresh
     // fills it the moment one does.
-    body.push_str("<div data-refresh=\"charts\">");
+    body.push_str(&format!("<div{}>", rendering.region("charts")));
     if rated {
         // The score chart takes the row when the game ranks nothing.
         let points = points_chart(&record, &registry, &kept);
@@ -2614,7 +2697,7 @@ pub(crate) fn tournament_page(
     }
     body.push_str("</div>");
 
-    body.push_str("<div data-refresh=\"rounds\">");
+    body.push_str(&format!("<div{}>", rendering.region("rounds")));
 
     // The rounds, newest first.
     let in_flight = rounds_in_flight(&record);
@@ -2630,7 +2713,7 @@ pub(crate) fn tournament_page(
         // A round that broke off is resumed from its own heading, and only
         // while nothing else plays.
         let resume = match (round.finished_seconds, playing) {
-            (None, false) => resume_forms(name, number),
+            (None, false) if controls => resume_forms(name, number),
             _ => String::new(),
         };
         body.push_str(&format!(
@@ -2668,7 +2751,7 @@ pub(crate) fn tournament_page(
     ));
     body.push_str("</div>");
 
-    Ok(page(&[TOURNAMENTS_SECTION, (name, "")], &body))
+    Ok(body)
 }
 
 /// The tournament in the shape of a game card: the numbered seats on a ring
@@ -3843,6 +3926,30 @@ pub(crate) fn agent_page(
     notice: &Notice,
     selection: &Selection,
 ) -> std::io::Result<String> {
+    let body = agent_body(name, notice, selection, Rendering::Page)?;
+
+    Ok(page(&[AGENTS_SECTION, (name, "")], &body))
+}
+
+/// The agent `name` as its page shows it, for a report: without the form
+/// changing it and without the refreshed region.
+pub(crate) fn agent_report(name: &str) -> std::io::Result<String> {
+    let notice = Notice {
+        started: None,
+        refused: None,
+    };
+
+    agent_body(name, &notice, &Selection::default(), Rendering::Report)
+}
+
+/// The body of the page of the agent `name`, its form and refreshed region
+/// as `rendering` asks.
+fn agent_body(
+    name: &str,
+    notice: &Notice,
+    selection: &Selection,
+    rendering: Rendering,
+) -> std::io::Result<String> {
     let registry = registry::load()?;
     let alias = registry
         .alias(name)
@@ -3872,7 +3979,7 @@ pub(crate) fn agent_page(
         }
     );
     body.push_str(&notice.render());
-    body.push_str("<div data-refresh=\"agent\">");
+    body.push_str(&format!("<div{}>", rendering.region("agent")));
 
     let live = played.iter().filter(|entry| entry.live).count();
     let finished = played
@@ -3989,12 +4096,41 @@ pub(crate) fn agent_page(
 
     // The form stays outside the refreshed region, so what is typed into it
     // survives the refresh.
-    body.push_str(&format!(
-        "<p class=\"{TITLE_CLASSES}\">{SETTINGS_TITLE}</p>{}",
-        alias_panel(&registry, selection, Some(&alias))
-    ));
+    if rendering == Rendering::Page {
+        body.push_str(&format!(
+            "<p class=\"{TITLE_CLASSES}\">{SETTINGS_TITLE}</p>{}",
+            alias_panel(&registry, selection, Some(&alias))
+        ));
+    }
 
-    Ok(page(&[AGENTS_SECTION, (name, "")], &body))
+    Ok(body)
+}
+
+/// The registered agents seated in `record`, by name, the ones its page links.
+pub(crate) fn seated_agents(
+    record: &ava_wire::Tournament,
+    registry: &registry::Registry,
+) -> Vec<String> {
+    record
+        .seats
+        .iter()
+        .filter_map(|seat| recorded_name(registry, &seat.agent, seat.name.as_deref()))
+        .filter(|named| registry.alias(named).is_some())
+        .collect()
+}
+
+/// The runs played in the tournaments `names`, by name.
+pub(crate) fn tournament_runs(names: &[String]) -> std::io::Result<Vec<String>> {
+    Ok(collect_runs()?
+        .into_iter()
+        .filter(|entry| {
+            entry
+                .placement
+                .as_ref()
+                .is_some_and(|placement| names.contains(&placement.tournament))
+        })
+        .map(|entry| entry.name)
+        .collect())
 }
 
 /// The last runs as one square each, oldest first, tinted by outcome and
@@ -5360,7 +5496,22 @@ fn render_table(
 /// The layout around one rendered `body`, headed by the `trail` leading to it.
 /// Every step but the last links to where it names.
 pub(crate) fn page(trail: &[(&str, &str)], body: &str) -> String {
-    let steps: String = trail
+    let steps = steps(trail);
+    let (title, _) = trail.last().copied().unwrap_or_default();
+    let (_, section) = trail.first().copied().unwrap_or_default();
+
+    LAYOUT_TEMPLATE
+        .replace(TRAIL_PLACEHOLDER, &steps)
+        .replace(TITLE_PLACEHOLDER, &escape(title))
+        .replace(SECTION_PLACEHOLDER, &escape(section))
+        .replace(BODY_PLACEHOLDER, body)
+}
+
+/// The steps of `trail`, each a label and its address, as the header shows
+/// them: every step but the last a link, the first in the face of a section
+/// and the rest in the face of a name.
+pub(crate) fn steps(trail: &[(&str, &str)]) -> String {
+    trail
         .iter()
         .enumerate()
         .map(|(step, (label, address))| {
@@ -5376,15 +5527,7 @@ pub(crate) fn page(trail: &[(&str, &str)], body: &str) -> String {
                 escape(label)
             )
         })
-        .collect();
-    let (title, _) = trail.last().copied().unwrap_or_default();
-    let (_, section) = trail.first().copied().unwrap_or_default();
-
-    LAYOUT_TEMPLATE
-        .replace(TRAIL_PLACEHOLDER, &steps)
-        .replace(TITLE_PLACEHOLDER, &escape(title))
-        .replace(SECTION_PLACEHOLDER, &escape(section))
-        .replace(BODY_PLACEHOLDER, body)
+        .collect()
 }
 
 pub(crate) fn escape(text: &str) -> String {

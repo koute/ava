@@ -47,6 +47,7 @@ pub(crate) enum SubCommand {
     Analyze(ava_run::docker::Analyze),
     Score(ava_scorer::score::Score),
     Serve(ava_web::serve::Serve),
+    Report(ava_web::report::Report),
     Remote(ava_scorer::remote::Remote),
     Upstreams(ava_run::upstreams::Upstreams),
     Tournament(ava_run::tournament::Tournament),
@@ -385,6 +386,32 @@ impl ServeCli {
     }
 }
 
+/// The command line of the report command.
+struct ReportCli;
+
+impl ReportCli {
+    const NAME: &str = "report";
+    const DESCRIPTION: &str = "write the report over tournaments as a file standing on its own";
+
+    const NAME_SHORT: char = TournamentCli::NAME_SHORT;
+    const DIRECTORY_SHORT: char = 'o';
+
+    fn help() {
+        command_help(Self::NAME, Self::DESCRIPTION);
+        arg_help_chr(
+            Self::NAME_SHORT,
+            "a tournament of the report, repeatable, every tournament on disk without it",
+        );
+        arg_help_chr(
+            Self::DIRECTORY_SHORT,
+            &format!(
+                "the directory the file is written into, {} by default",
+                ava_web::report::DEFAULT_DIRECTORY
+            ),
+        );
+    }
+}
+
 /// The command line of the git remote command.
 struct RemoteCli;
 
@@ -452,6 +479,9 @@ impl Parser {
                 ServeCli::NAME => {
                     parser.command = Some(SubCommand::Serve(Default::default()));
                 }
+                ReportCli::NAME => {
+                    parser.command = Some(SubCommand::Report(Default::default()));
+                }
                 RemoteCli::NAME => {
                     parser.command = Some(SubCommand::Remote(Default::default()));
                 }
@@ -481,6 +511,7 @@ impl Parser {
             Some(SubCommand::Tournament(ref command)) => TournamentCli::require_arguments(command),
             Some(SubCommand::Image(_))
             | Some(SubCommand::Serve(_))
+            | Some(SubCommand::Report(_))
             | Some(SubCommand::Remote(_))
             | Some(SubCommand::Upstreams(_))
             | None => {}
@@ -644,6 +675,18 @@ impl Parser {
                     command.run = run;
                     break;
                 }
+                ReportCli::DIRECTORY_SHORT => {
+                    let directory = Self::value(args, &mut chars, flag, "missing directory");
+                    let Some(SubCommand::Report(ref mut command)) = self.command else {
+                        bail(
+                            flag,
+                            &format!("only valid in the {} subcommand", ReportCli::NAME),
+                        );
+                    };
+                    command.directory = directory.into();
+                    break;
+                }
+
                 // Serve
                 ServeCli::ADDRESS_SHORT => {
                     let address = Self::value(args, &mut chars, flag, "missing address");
@@ -710,7 +753,7 @@ impl Parser {
                     break;
                 }
 
-                // Upstreams and tournament
+                // Upstreams, tournament and report
                 UpstreamsCli::NGINX_MAP_SHORT => match self.command {
                     Some(SubCommand::Upstreams(ref mut command)) => command.nginx_map = true,
                     Some(SubCommand::Tournament(ref mut command)) => {
@@ -718,12 +761,18 @@ impl Parser {
                         command.name = name;
                         break;
                     }
+                    Some(SubCommand::Report(ref mut command)) => {
+                        let name = Self::value(args, &mut chars, flag, "missing tournament name");
+                        command.names.push(name);
+                        break;
+                    }
                     _ => bail(
                         flag,
                         &format!(
-                            "only valid in the {} or {} subcommands",
+                            "only valid in the {}, {} or {} subcommands",
                             UpstreamsCli::NAME,
-                            TournamentCli::NAME
+                            TournamentCli::NAME,
+                            ReportCli::NAME
                         ),
                     ),
                 },
@@ -947,6 +996,7 @@ pub(crate) fn help() -> ! {
         ImageCli::help,
         ScoreCli::help,
         ServeCli::help,
+        ReportCli::help,
         RemoteCli::help,
         UpstreamsCli::help,
     ] {

@@ -1,4 +1,4 @@
-.PHONY: book clippy doc fmt install serve test test-book
+.PHONY: book clippy doc fmt install report serve test test-book
 
 
 book: test-book
@@ -15,6 +15,9 @@ fmt:
 
 install:
 	cargo install --path crates/ava --locked --force
+
+report: install
+	ava report
 
 serve: install
 	ava image
