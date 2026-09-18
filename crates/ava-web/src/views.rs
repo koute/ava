@@ -260,6 +260,9 @@ pub(crate) const NOTE_CLASSES: &str = "text-neutral-400";
 const TRAIL_OPTICAL_NUDGE: &str = "-mr-[0.07em]";
 pub(crate) const MUTED_CLASSES: &str = "text-neutral-500";
 pub(crate) const MONO_CLASSES: &str = "font-mono";
+/// What a cell whose label carries a unit is sorted by, read by the script
+/// sorting the tables.
+pub(crate) const SORT_VALUE_FIELD: &str = "data-value";
 pub(crate) const LINK_CLASSES: &str =
     "font-mono text-indigo-300 hover:text-indigo-200 transition-colors";
 const CONSOLE_CLASSES: &str = "rounded-lg border border-neutral-800 bg-neutral-950 p-4 text-xs \
@@ -1867,7 +1870,7 @@ pub(crate) fn scoreboard_page(selection: &Selection) -> std::io::Result<String> 
                 seen.map(|seen| seen.runs.to_string()).unwrap_or_default(),
                 seen.map(|seen| seen.passed.to_string()).unwrap_or_default(),
                 standing
-                    .map(|standing| tally_label(&standing.fights))
+                    .map(|standing| tally_cell(&standing.fights))
                     .unwrap_or_default(),
                 standing
                     .and_then(|standing| standing.rounds.score())
@@ -2603,7 +2606,7 @@ fn tournament_body(
             row.extend(cells[seat].iter().cloned());
             row.extend([
                 standing
-                    .map(|standing| tally_label(&standing.fights))
+                    .map(|standing| tally_cell(&standing.fights))
                     .unwrap_or_default(),
                 score.map(|score| format!("{score:.2}")).unwrap_or_default(),
                 match costs[seat] {
@@ -3856,17 +3859,25 @@ fn pairing_cells(record: &ava_wire::Tournament) -> std::io::Result<Vec<Vec<Strin
                     let label = if cell.tally.rounds() == 0 {
                         format!("<span class=\"{MUTED_CLASSES}\">none</span>")
                     } else {
-                        format!(
-                            "<span class=\"{MONO_CLASSES} {}\">{}</span>",
-                            tint(&cell.tally),
-                            tally_label(&cell.tally)
-                        )
+                        tally_cell(&cell.tally)
                     };
                     explained(&label, &cell.rounds.join(" \u{00b7} "))
                 })
                 .collect()
         })
         .collect())
+}
+
+/// A tally in a table, tinted from the view of its first side and sorted by
+/// the rounds it won, a draw counting half, since won-drawn-lost read as text
+/// puts every tally of ten wins under one of five.
+fn tally_cell(tally: &ava_wire::Tally) -> String {
+    format!(
+        "<span {SORT_VALUE_FIELD}=\"{}\" class=\"{MONO_CLASSES} {}\">{}</span>",
+        tally.won as f64 + tally.drawn as f64 / 2.0,
+        tint(tally),
+        tally_label(tally)
+    )
 }
 
 /// The colour of a tally from the view of its first side.
@@ -4266,11 +4277,7 @@ fn rivals(
             )
             .to_vec();
             row.extend([
-                format!(
-                    "<span class=\"{MONO_CLASSES} {}\">{}</span>",
-                    tint(&seen.tally),
-                    tally_label(&seen.tally)
-                ),
+                tally_cell(&seen.tally),
                 seen.fought.to_string(),
                 seen.tally
                     .score()
@@ -5323,7 +5330,7 @@ fn meter(value: u64, ceiling: u64, fill: &str, label: &str, label_width: &str) -
     let percent = (value.min(ceiling) * 100).checked_div(ceiling).unwrap_or(0);
 
     format!(
-        "<span class=\"flex items-center gap-2 whitespace-nowrap\">\
+        "<span {SORT_VALUE_FIELD}=\"{value}\" class=\"flex items-center gap-2 whitespace-nowrap\">\
          <span class=\"{METER_TRACK_CLASSES}\"><span class=\"block h-full rounded-full {fill}\" style=\"width:{percent}%\"></span></span>\
          <span class=\"{MONO_CLASSES} tabular-nums text-neutral-200 shrink-0 {label_width}\">{label}</span></span>"
     )
@@ -5580,6 +5587,22 @@ fn strip_ansi(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_tally_sorts_by_the_rounds_it_won() {
+        let tally = |won, drawn, lost| ava_wire::Tally { won, drawn, lost };
+        let cell = super::tally_cell(&tally(10, 3, 2));
+
+        assert!(cell.contains(">10-3-2<"));
+        assert!(cell.contains("data-value=\"11.5\""));
+        // Read as text a tally of ten wins would sort under one of five.
+        assert!(super::tally_cell(&tally(5, 0, 0)).contains("data-value=\"5\""));
+    }
+
+    #[test]
+    fn a_meter_sorts_by_its_value() {
+        assert!(super::points_meter(3865).contains("data-value=\"3865\""));
+    }
+
     #[test]
     fn an_avatar_is_mirrored_and_the_same_for_the_same_agent() {
         let agent = ava_wire::Agent {

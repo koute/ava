@@ -1638,10 +1638,19 @@ fn titled(label: &str, title: &str) -> String {
     format!("<span title=\"{}\">{label}</span>", views::escape(title))
 }
 
+/// `label` with the number its column sorts it by, since a label carrying a
+/// unit is another number to a sort reading the text of the cell.
+fn valued(value: f64, label: &str) -> String {
+    format!(
+        "<span {}=\"{value}\">{label}</span>",
+        views::SORT_VALUE_FIELD
+    )
+}
+
 /// A count of seconds as a span, nothing for none.
 fn seconds_label(seconds: Option<f64>) -> String {
     seconds
-        .map(|seconds| usage::span(seconds as u64))
+        .map(|seconds| valued(seconds, &usage::span(seconds as u64)))
         .unwrap_or_default()
 }
 
@@ -1667,7 +1676,7 @@ fn tokens_label(count: u64) -> String {
         _ => return count.to_string(),
     };
 
-    titled(&compact, &count.to_string())
+    valued(count as f64, &titled(&compact, &count.to_string()))
 }
 
 /// The mean of `values`, nothing over none.
@@ -1772,6 +1781,11 @@ mod tests {
         assert!(super::tokens_label(262_798).contains(">263k<"));
         assert!(super::tokens_label(27_449_604).contains(">27.4M<"));
         assert_eq!(super::percent_label(Some(0.4251)), "43%");
+        // A label carrying a unit sorts by the number behind it, not by its text.
+        assert!(super::tokens_label(262_798).contains("data-value=\"262798\""));
+        assert!(super::seconds_label(Some(4080.0)).contains(">1h 8m<"));
+        assert!(super::seconds_label(Some(4080.0)).contains("data-value=\"4080\""));
+        assert_eq!(super::seconds_label(None), "");
         assert_eq!(super::percent_label(None), "");
         assert_eq!(super::mean(&[3.0, 1.0, 2.0]), Some(2.0));
         assert_eq!(super::mean(&[]), None);
