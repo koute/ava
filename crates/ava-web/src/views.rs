@@ -1637,13 +1637,17 @@ fn run_body(
                         } else {
                             String::new()
                         },
-                        format!(
-                            "<a class=\"{LINK_CLASSES}\" href=\"/run/{}/entries/{}/{}\">{}</a>",
-                            escape(name),
-                            kept.seconds,
-                            escape(file),
+                        if controls {
+                            format!(
+                                "<a class=\"{LINK_CLASSES}\" href=\"/run/{}/entries/{}/{}\">{}</a>",
+                                escape(name),
+                                kept.seconds,
+                                escape(file),
+                                escape(file)
+                            )
+                        } else {
                             escape(file)
-                        ),
+                        },
                     ]
                 })
                 .collect();
@@ -1677,7 +1681,7 @@ fn run_body(
         ));
     }
 
-    if let Ok(tail) = console_tail(&directory.join(docker::AGENT_LOG)) {
+    if controls && let Ok(tail) = console_tail(&directory.join(docker::AGENT_LOG)) {
         body.push_str(&format!(
             "<p class=\"{TITLE_CLASSES}\">console <span class=\"{NOTE_CLASSES} font-normal\">the last {} bytes</span></p><pre class=\"{CONSOLE_CLASSES}\">{}</pre>",
             tail.len(),
@@ -1685,19 +1689,21 @@ fn run_body(
         ));
     }
 
-    let files = RUN_FILES
-        .iter()
-        .filter(|file| directory.join(file).exists())
-        .map(|file| {
-            format!(
-                "<a class=\"{LINK_CLASSES}\" href=\"/run/{}/{file}\">{file}</a>",
-                escape(name)
-            )
-        })
-        .collect::<String>();
-    body.push_str(&format!(
-        "<p class=\"{TITLE_CLASSES}\">files</p><p class=\"flex flex-wrap gap-x-4 gap-y-1\">{files}</p>"
-    ));
+    if controls {
+        let files = RUN_FILES
+            .iter()
+            .filter(|file| directory.join(file).exists())
+            .map(|file| {
+                format!(
+                    "<a class=\"{LINK_CLASSES}\" href=\"/run/{}/{file}\">{file}</a>",
+                    escape(name)
+                )
+            })
+            .collect::<String>();
+        body.push_str(&format!(
+            "<p class=\"{TITLE_CLASSES}\">files</p><p class=\"flex flex-wrap gap-x-4 gap-y-1\">{files}</p>"
+        ));
+    }
 
     let mut parameters = serde_json::to_value(&entry.run).unwrap_or_default();
     if let Some(object) = parameters.as_object_mut() {
@@ -2757,18 +2763,20 @@ fn tournament_body(
         ));
     }
 
-    body.push_str(&format!(
-        "<p class=\"{TITLE_CLASSES}\">files</p><p class=\"flex flex-wrap gap-x-4 gap-y-1\">{}</p>",
-        tournament_files(name)
-            .iter()
-            .map(|file| {
-                format!(
-                    "<a class=\"{LINK_CLASSES}\" href=\"/tournament/{}/{file}\">{file}</a>",
-                    escape(name)
-                )
-            })
-            .collect::<String>()
-    ));
+    if controls {
+        body.push_str(&format!(
+            "<p class=\"{TITLE_CLASSES}\">files</p><p class=\"flex flex-wrap gap-x-4 gap-y-1\">{}</p>",
+            tournament_files(name)
+                .iter()
+                .map(|file| {
+                    format!(
+                        "<a class=\"{LINK_CLASSES}\" href=\"/tournament/{}/{file}\">{file}</a>",
+                        escape(name)
+                    )
+                })
+                .collect::<String>()
+        ));
+    }
     body.push_str("</div>");
 
     Ok(body)
@@ -4129,17 +4137,16 @@ fn agent_body(
     Ok(body)
 }
 
-/// The registered agents seated in `record`, by name, the ones its page links.
-pub(crate) fn seated_agents(
-    record: &ava_wire::Tournament,
-    registry: &registry::Registry,
-) -> Vec<String> {
-    record
-        .seats
+/// Every agent the registry names, which is every agent a page links to.
+pub(crate) fn agent_names() -> std::io::Result<Vec<String>> {
+    let mut names: Vec<String> = registry::load()?
+        .agents
         .iter()
-        .filter_map(|seat| recorded_name(registry, &seat.agent, seat.name.as_deref()))
-        .filter(|named| registry.alias(named).is_some())
-        .collect()
+        .map(|alias| alias.name.clone())
+        .collect();
+    names.sort();
+
+    Ok(names)
 }
 
 /// Every run on disk, by name.

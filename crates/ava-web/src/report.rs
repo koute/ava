@@ -37,9 +37,7 @@ impl Default for Report {
     }
 }
 
-/// Write the report of `command` into its directory and print the path. The
-/// file is named after the labels of its parts, after the tournaments named
-/// without parts, and `report.html` when it spans every tournament on disk.
+/// Write the report of `command` into its directory as a site.
 pub fn run(command: &Report) -> std::io::Result<i32> {
     let parts = if command.parts.is_empty() {
         vec![Part {
@@ -52,13 +50,34 @@ pub fn run(command: &Report) -> std::io::Result<i32> {
     } else {
         command.parts.clone()
     };
-    std::fs::create_dir_all(&command.directory)?;
-    let path = command.directory.join(file_name(&command.parts));
-    std::fs::write(&path, file(&parts)?)?;
-    println!("{}", path.display());
+    write_site(&parts, &command.directory)?;
+    println!("{}", command.directory.join(SITE_INDEX).display());
 
     Ok(0)
 }
+
+/// The layout of the site.
+const SITE_INDEX: &str = "index.html";
+const RUNS_DIRECTORY: &str = "runs";
+const AGENTS_DIRECTORY: &str = "agents";
+const LOGS_DIRECTORY: &str = "logs";
+const ASSETS_DIRECTORY: &str = "assets";
+const FONTS_DIRECTORY: &str = "fonts";
+const SPRITES_DIRECTORY: &str = "sprites";
+const LOGOS_DIRECTORY: &str = "games";
+const TAILWIND_FILE: &str = "tailwind.js";
+const TABLE_SORT_FILE: &str = "table-sort.js";
+const LOGO_SUFFIX: &str = ".png";
+const LOG_SUFFIX: &str = ".log.gz";
+const PARENT_PREFIX: &str = "../";
+/// Where the interface serves what a page of the site carries itself.
+const ASSET_ROOT: &str = "/assets/";
+/// A tournament is a tab of the report, so its links lead there.
+const TOURNAMENT_ADDRESS_PREFIX: &str = "/tournament/";
+/// The logs are too large to publish as they stand.
+const GZIP: [&str; 3] = ["gzip", "-9", "-c"];
+const KILOBYTE: f64 = 1_000.0;
+const MEGABYTE: f64 = 1_000_000.0;
 
 const TITLE: &str = "Agent vs Agent";
 /// The pages of the agents and the runs the file carries: each hidden until
@@ -708,40 +727,8 @@ pub(crate) fn page(names: &[String]) -> std::io::Result<String> {
 /// parts behind a switch under it when there are several, with the pages of
 /// the agents seated in them and of every run on disk behind their links.
 pub(crate) fn file(parts: &[Part]) -> std::io::Result<String> {
-    let registry = registry::load()?;
-    let mut front = masthead();
-    let mut agents = Vec::new();
-    match parts {
-        [part] if part.label.is_empty() => {
-            let records = records(&part.names)?;
-            front.push_str(&report(&records, "")?);
-            agents.extend(
-                records
-                    .iter()
-                    .flat_map(|record| views::seated_agents(record, &registry)),
-            );
-        }
-        _ => {
-            let mut panes = Vec::new();
-            for (index, part) in parts.iter().enumerate() {
-                let records = records(&part.names)?;
-                panes.push((
-                    views::escape(&part.label),
-                    report(&records, &format!("{PART_FIELD}{index}-"))?,
-                ));
-                agents.extend(
-                    records
-                        .iter()
-                        .flat_map(|record| views::seated_agents(record, &registry)),
-                );
-            }
-            front.push_str(&tabs(PART_FIELD, &PART_STYLE, &panes));
-        }
-    }
-    let mut body = format!("<div class=\"{FRONT_CLASS}\">{front}</div>");
-
-    agents.sort();
-    agents.dedup();
+    let mut body = format!("<div class=\"{FRONT_CLASS}\">{}</div>", front_page(parts)?);
+    let agents = views::agent_names()?;
     let mut runs = views::run_names()?;
     runs.sort();
     for agent in &agents {
@@ -773,6 +760,209 @@ pub(crate) fn file(parts: &[Part]) -> std::io::Result<String> {
     );
 
     Ok(document(&body, &views::games()?))
+}
+
+/// The report over `parts`, the masthead above it and the parts behind a
+/// switch when there are several.
+fn front_page(parts: &[Part]) -> std::io::Result<String> {
+    let mut body = masthead();
+    match parts {
+        [part] if part.label.is_empty() => {
+            body.push_str(&report(&records(&part.names)?, "")?);
+        }
+        _ => {
+            let mut panes = Vec::new();
+            for (index, part) in parts.iter().enumerate() {
+                panes.push((
+                    views::escape(&part.label),
+                    report(&records(&part.names)?, &format!("{PART_FIELD}{index}-"))?,
+                ));
+            }
+            body.push_str(&tabs(PART_FIELD, &PART_STYLE, &panes));
+        }
+    }
+
+    Ok(body)
+}
+
+/// Write the report over `parts` into `directory` as a site: a page per run
+/// and per agent of their own, so a visitor loads the report alone and takes
+/// the whole log of a run as a download beside its page.
+fn write_site(parts: &[Part], directory: &std::path::Path) -> std::io::Result<()> {
+    let front = front_page(parts)?;
+    let agents = views::agent_names()?;
+    let mut runs = views::run_names()?;
+    runs.sort();
+    let games = views::games()?;
+
+    write_assets(directory, &games)?;
+    let logs = directory.join(LOGS_DIRECTORY);
+    for path in [
+        &logs,
+        &directory.join(RUNS_DIRECTORY),
+        &directory.join(AGENTS_DIRECTORY),
+    ] {
+        std::fs::create_dir_all(path)?;
+    }
+
+    let page = |body: &str, prefix: &str| {
+        site_document(&linked(body, prefix, &runs, &agents), prefix, &games)
+    };
+
+    std::fs::write(directory.join(SITE_INDEX), page(&front, ""))?;
+    for agent in &agents {
+        std::fs::write(
+            directory
+                .join(AGENTS_DIRECTORY)
+                .join(format!("{agent}{FILE_SUFFIX}")),
+            page(&views::agent_report(agent)?, PARENT_PREFIX),
+        )?;
+    }
+    for run in &runs {
+        let mut body = views::run_report(run)?;
+        if let Some(bytes) = write_log(run, &logs)? {
+            body.push_str(&log_link(run, bytes));
+        }
+        std::fs::write(
+            directory
+                .join(RUNS_DIRECTORY)
+                .join(format!("{run}{FILE_SUFFIX}")),
+            page(&body, PARENT_PREFIX),
+        )?;
+    }
+
+    Ok(())
+}
+
+/// What every page of the site shares, written once.
+fn write_assets(directory: &std::path::Path, games: &[String]) -> std::io::Result<()> {
+    let assets = directory.join(ASSETS_DIRECTORY);
+    let fonts = assets.join(FONTS_DIRECTORY);
+    let sprites = assets.join(SPRITES_DIRECTORY);
+    let logos = assets.join(LOGOS_DIRECTORY);
+    for path in [&assets, &fonts, &sprites, &logos] {
+        std::fs::create_dir_all(path)?;
+    }
+
+    std::fs::write(assets.join(TAILWIND_FILE), crate::serve::TAILWIND)?;
+    std::fs::write(assets.join(TABLE_SORT_FILE), crate::serve::TABLE_SORT)?;
+    for (name, bytes) in crate::serve::FONTS {
+        std::fs::write(fonts.join(name), bytes)?;
+    }
+    for (name, bytes) in crate::serve::SPRITES {
+        std::fs::write(sprites.join(name), bytes)?;
+    }
+    for game in games {
+        if let Some((logo, _)) = views::game_logo(game) {
+            std::fs::write(logos.join(format!("{game}{LOGO_SUFFIX}")), logo)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// The document around `body`, `prefix` leading to the root of the site.
+fn site_document(body: &str, prefix: &str, games: &[String]) -> String {
+    let (head, _) = views::LAYOUT_TEMPLATE
+        .split_once(HEAD_END)
+        .expect("the layout has a head");
+    let root = format!("{prefix}{ASSETS_DIRECTORY}/");
+    let head = head
+        .replace(views::TITLE_PLACEHOLDER, TITLE)
+        .replace(ASSET_ROOT, &root);
+    let mut body = body.replace(ASSET_ROOT, &root);
+    for game in games {
+        body = body.replace(
+            &views::logo_address(game),
+            &format!("{root}{LOGOS_DIRECTORY}/{game}{LOGO_SUFFIX}"),
+        );
+    }
+
+    format!(
+        "{head}{HEAD_END}<body class=\"{BODY_CLASSES}\"><main class=\"{MAIN_CLASSES}\">{body}</main>\
+         <script src=\"{root}{TABLE_SORT_FILE}\"></script></body></html>"
+    )
+}
+
+/// `body` with every link to one of `runs` or `agents` pointing at its page.
+fn linked(body: &str, prefix: &str, runs: &[String], agents: &[String]) -> String {
+    let mut body = body.to_string();
+    for (address, directory, names) in [
+        (RUN_ADDRESS_PREFIX, RUNS_DIRECTORY, runs),
+        (AGENT_ADDRESS_PREFIX, AGENTS_DIRECTORY, agents),
+    ] {
+        for name in names {
+            let name = views::escape(name);
+            body = body.replace(
+                &format!("href=\"{address}{name}\""),
+                &format!("href=\"{prefix}{directory}/{name}{FILE_SUFFIX}\""),
+            );
+        }
+    }
+
+    pointed_at_report(&body, prefix)
+}
+
+/// `body` with every link to a tournament pointing at the report.
+fn pointed_at_report(body: &str, prefix: &str) -> String {
+    let mut pointed = String::with_capacity(body.len());
+    let mut rest = body;
+    while let Some(at) = rest.find(TOURNAMENT_ADDRESS_PREFIX) {
+        pointed.push_str(&rest[..at]);
+        pointed.push_str(&format!("{prefix}{SITE_INDEX}"));
+        rest = &rest[at..];
+        rest = &rest[rest.find('"').unwrap_or(rest.len())..];
+    }
+    pointed.push_str(rest);
+
+    pointed
+}
+
+/// The log of `run` packed into `directory` and how large it came out.
+fn write_log(run: &str, directory: &std::path::Path) -> std::io::Result<Option<u64>> {
+    let source = std::path::Path::new(docker::RUN_DIRECTORY)
+        .join(run)
+        .join(docker::AGENT_LOG);
+    if !source.is_file() {
+        return Ok(None);
+    }
+
+    let path = directory.join(format!("{run}{LOG_SUFFIX}"));
+    let [program, arguments @ ..] = GZIP;
+    let status = std::process::Command::new(program)
+        .args(arguments)
+        .arg(&source)
+        .stdout(std::fs::File::create(&path)?)
+        .status()?;
+    if !status.success() {
+        return Err(std::io::Error::other(format!(
+            "{program}: {status} on {run}"
+        )));
+    }
+
+    Ok(Some(path.metadata()?.len()))
+}
+
+/// The link handing the whole log of `run` over.
+fn log_link(run: &str, bytes: u64) -> String {
+    format!(
+        "<p class=\"{}\">console</p>\
+         <p><a class=\"{}\" href=\"{PARENT_PREFIX}{LOGS_DIRECTORY}/{}{LOG_SUFFIX}\">the whole log</a> \
+         <span class=\"{}\">{}</span></p>",
+        views::TITLE_CLASSES,
+        views::LINK_CLASSES,
+        views::escape(run),
+        views::MUTED_CLASSES,
+        size_label(bytes)
+    )
+}
+
+/// `bytes` as a size to read.
+fn size_label(bytes: u64) -> String {
+    match bytes as f64 {
+        bytes if bytes >= MEGABYTE => format!("{:.1} MB", bytes / MEGABYTE),
+        bytes => format!("{:.0} kB", bytes / KILOBYTE),
+    }
 }
 
 /// The records of the tournaments `names`.

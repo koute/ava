@@ -1,7 +1,7 @@
 .PHONY: book clippy doc fmt install push-report serve test test-book
 
 PAGES ?= ../ava-pages
-REPORT ?= reports/report.html
+SITE ?= reports
 
 book: test-book
 	mdbook serve book --open
@@ -19,8 +19,9 @@ install:
 	cargo install --path crates/ava --locked --force
 
 push-report:
-	cp $(REPORT) $(PAGES)/index.html
-	git -C $(PAGES) commit -am "report $$(date -u +%F)"
+	rsync -a --delete --exclude .git --exclude .nojekyll $(SITE)/ $(PAGES)/
+	git -C $(PAGES) add -A
+	git -C $(PAGES) commit -m "report $$(date -u +%F)"
 	git -C $(PAGES) push
 
 serve: install
