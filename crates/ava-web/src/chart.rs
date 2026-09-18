@@ -14,14 +14,14 @@ const HEIGHT: f64 = 240.0;
 /// The room the labels and the title of the vertical axis take on the left.
 const LEFT: f64 = 64.0;
 /// The room the labels of the horizontal axis take at the bottom, and what
-/// a second line of a label, an axis title and a row of icons add to it.
+/// every further line of a label, an axis title and a row of icons add to it.
 const LABEL_ROOM: f64 = 28.0;
 const LINE_ROOM: f64 = 12.0;
 const AXIS_TITLE_ROOM: f64 = 16.0;
 /// The width of a character of a tick label, for telling when neighbours would collide.
 const CHARACTER_WIDTH: f64 = 6.2;
-/// A tick label too wide for its slot breaks in two here.
-const LABEL_BREAK: char = '-';
+/// A tick label too wide for its slot breaks after these.
+const LABEL_BREAKS: [char; 2] = ['-', ' '];
 /// The room above the plot, so the topmost point is not cut.
 const TOP: f64 = 10.0;
 /// The room right of the plot, so the last point is not cut.
@@ -329,21 +329,34 @@ pub(crate) fn lines(
     }
 
     let plot_width = width - LEFT - RIGHT;
-    // A label wider than its slot breaks into two lines at its last dash.
+    // A label wider than its slot wraps at its dashes and spaces into lines
+    // that fit the slot, a piece wider than the slot standing alone.
     let slot_width = plot_width / horizontal.ticks.len().max(1) as f64;
+    let fits = |text: &str| text.chars().count() as f64 * CHARACTER_WIDTH <= slot_width;
     let lines_of = |label: &str| -> Vec<String> {
-        let wide = label.chars().count() as f64 * CHARACTER_WIDTH > slot_width;
-        match label.rfind(LABEL_BREAK).filter(|_| wide) {
-            Some(cut) => vec![label[..=cut].to_string(), label[cut + 1..].to_string()],
-            None => vec![label.to_string()],
+        if fits(label) {
+            return vec![label.to_string()];
         }
+        let mut lines: Vec<String> = Vec::new();
+        for piece in pieces(label) {
+            match lines.last_mut() {
+                Some(line) if fits(&format!("{line}{piece}")) => line.push_str(&piece),
+                _ => lines.push(piece),
+            }
+        }
+        lines
+            .iter()
+            .map(|line| line.trim_end().to_string())
+            .collect()
     };
-    let wrapped = horizontal
+    let deepest = horizontal
         .ticks
         .iter()
-        .any(|(_, label)| lines_of(label).len() > 1);
+        .map(|(_, label)| lines_of(label).len())
+        .max()
+        .unwrap_or(1);
     let bottom = LABEL_ROOM
-        + if wrapped { LINE_ROOM } else { 0.0 }
+        + (deepest - 1) as f64 * LINE_ROOM
         + if horizontal.title.is_empty() {
             0.0
         } else {
@@ -575,6 +588,23 @@ pub(crate) fn lines(
     )
 }
 
+/// `label` cut after every break character, each piece keeping its break.
+fn pieces(label: &str) -> Vec<String> {
+    let mut pieces = Vec::new();
+    let mut piece = String::new();
+    for character in label.chars() {
+        piece.push(character);
+        if LABEL_BREAKS.contains(&character) {
+            pieces.push(std::mem::take(&mut piece));
+        }
+    }
+    if !piece.is_empty() {
+        pieces.push(piece);
+    }
+
+    pieces
+}
+
 /// The rules lighting a line and its legend entry together: while either is
 /// under the cursor the line thickens, the other lines fade and the entry
 /// takes a ground and the colour of the line. They are scoped to the chart
@@ -675,8 +705,52 @@ mod tests {
             "nothing",
         );
 
-        assert!(bars.contains(">r2wars-parity-</tspan>"));
-        assert!(bars.contains(">max</tspan>"));
+        assert!(bars.contains(">r2wars-</tspan>"));
+        assert!(bars.contains(">parity-max</tspan>"));
+    }
+
+    #[test]
+    fn a_label_wraps_at_spaces_too_and_deepens_the_bottom() {
+        assert_eq!(
+            super::pieces("deepseek-v4.1-flash high"),
+            ["deepseek-", "v4.1-", "flash ", "high"]
+        );
+
+        let series = vec![Series {
+            label: "a".to_string(),
+            hover: String::new(),
+            hue: 0,
+            face: String::new(),
+            points: (0..9)
+                .map(|slot| Point {
+                    x: slot as f64,
+                    y: 0.5,
+                    hover: String::new(),
+                })
+                .collect(),
+        }];
+        let horizontal = Axis {
+            min: -0.5,
+            max: 8.5,
+            ticks: (0..9)
+                .map(|slot| (slot as f64, "deepseek-v4.1-flash high".to_string()))
+                .collect(),
+            title: String::new(),
+            icons: Vec::new(),
+        };
+        let bars = super::lines(
+            &series,
+            &horizontal,
+            &Axis::values(1.0),
+            Shape::Bars,
+            None,
+            super::NARROW_WIDTH,
+            "nothing",
+        );
+
+        assert!(bars.contains(">deepseek-</tspan>"));
+        assert!(bars.contains(">flash</tspan>"));
+        assert!(bars.contains(">high</tspan>"));
     }
 
     #[test]

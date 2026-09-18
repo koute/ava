@@ -10,11 +10,20 @@ use ava_run::{docker, registry, runs, tournament, usage};
 /// The directory the reports are written into unless another is named.
 pub const DEFAULT_DIRECTORY: &str = "reports";
 
+/// A part of a report: tournaments under a label of their own, the file
+/// switching between its parts. A report in one piece is one part without a
+/// label.
+#[derive(Clone, Debug, Default)]
+pub struct Part {
+    pub label: String,
+    pub names: Vec<String>,
+}
+
 /// The report command: the report over tournaments as a file.
 #[derive(Debug)]
 pub struct Report {
-    /// The tournaments of the report, every tournament on disk when empty.
-    pub names: Vec<String>,
+    /// The parts of the report, one piece over every tournament on disk when empty.
+    pub parts: Vec<Part>,
     /// The directory the file is written into.
     pub directory: std::path::PathBuf,
 }
@@ -22,34 +31,36 @@ pub struct Report {
 impl Default for Report {
     fn default() -> Self {
         Self {
-            names: Vec::new(),
+            parts: Vec::new(),
             directory: DEFAULT_DIRECTORY.into(),
         }
     }
 }
 
 /// Write the report of `command` into its directory and print the path. The
-/// file is named after the tournaments named, `report.html` when it spans
-/// every tournament on disk.
+/// file is named after the labels of its parts, after the tournaments named
+/// without parts, and `report.html` when it spans every tournament on disk.
 pub fn run(command: &Report) -> std::io::Result<i32> {
-    let names = if command.names.is_empty() {
-        tournament::list()?
-            .into_iter()
-            .map(|record| record.name)
-            .collect()
+    let parts = if command.parts.is_empty() {
+        vec![Part {
+            label: String::new(),
+            names: tournament::list()?
+                .into_iter()
+                .map(|record| record.name)
+                .collect(),
+        }]
     } else {
-        command.names.clone()
+        command.parts.clone()
     };
     std::fs::create_dir_all(&command.directory)?;
-    let path = command.directory.join(file_name(&command.names));
-    std::fs::write(&path, file(&names)?)?;
+    let path = command.directory.join(file_name(&command.parts));
+    std::fs::write(&path, file(&parts)?)?;
     println!("{}", path.display());
 
     Ok(0)
 }
 
 const TITLE: &str = "Agent vs Agent";
-const SUBTITLE: &str = "report rendered at";
 /// The pages of the agents and the runs the file carries: each hidden until
 /// a link makes it the target of the address, which hides the report itself.
 const PAGES_CLASS: &str = "report-pages";
@@ -69,15 +80,47 @@ const TAILWIND_TAG: &str = "<script src=\"/assets/tailwind.js\"></script>";
 /// Where the layout loads the fonts from, replaced by the fonts themselves.
 const FONT_ADDRESS_PREFIX: &str = "/assets/fonts/";
 const BODY_CLASSES: &str = "bg-neutral-950 text-neutral-200 font-sans text-sm antialiased";
-const MAIN_CLASSES: &str = "w-full px-6 py-6";
-const HEADING_CLASSES: &str = "text-lg font-semibold text-neutral-100";
-const HEADING_ROW_CLASSES: &str = "flex items-baseline gap-4";
-const SUBTITLE_CLASSES: &str = "text-xs text-neutral-500 mt-1";
-/// The tabs of the report and the classes their rules are scoped by.
-const TABS_CLASS: &str = "report-tabs";
+const MAIN_CLASSES: &str = "max-w-7xl mx-auto px-6 py-10";
+/// The masthead of the file, the title.
+const HEADING_CLASSES: &str = "text-4xl font-semibold tracking-tight text-neutral-100";
+/// The about tab: one of the characters walking beside what the report is,
+/// over the games as their page shows them.
+const ABOUT_CLASSES: &str = "p-4 flex items-start gap-6";
+const ABOUT_TEXT_CLASSES: &str = "max-w-2xl text-base leading-relaxed text-neutral-400";
+const ABOUT: &str = "Coding agents, each a harness on a model, play games against each other in tournaments. \
+                     The report covers their finished rounds: how every model scored, and what models and harnesses spent in dollars, tokens and time.";
+/// The tabs of the report, in their order.
+const TAB_TITLES: [&str; 5] = [
+    "quality",
+    "model efficiency",
+    "harness efficiency",
+    "tournaments",
+    "about",
+];
+/// The fields of the radio buttons behind the tabs of the report and the
+/// tabs of its tournaments, under the prefix of their part, and behind the
+/// switch between the parts.
 const TAB_FIELD: &str = "tab";
-const TAB_ROW_CLASSES: &str = "flex gap-1.5 mt-8 mb-3 pb-2 border-b border-neutral-800";
-const TAB_CLASSES: &str = "block rounded-md px-3 py-1.5 text-sm text-neutral-400 cursor-pointer \
+const SUBTAB_FIELD: &str = "subtab";
+const PART_FIELD: &str = "part";
+/// The tabs of the report as a row, the tournaments and the parts as chips
+/// like the ones choosing the tournaments on the page.
+const TAB_STYLE: TabStyle = TabStyle {
+    row: TAB_ROW_CLASSES,
+    tab: TAB_CLASSES,
+};
+const SUBTAB_STYLE: TabStyle = TabStyle {
+    row: SUBTAB_ROW_CLASSES,
+    tab: CHOICE_CLASSES,
+};
+const PART_STYLE: TabStyle = TabStyle {
+    row: PART_ROW_CLASSES,
+    tab: CHOICE_CLASSES,
+};
+const SUBTAB_ROW_CLASSES: &str = "flex flex-wrap items-center gap-3 mt-5 mb-8";
+const PART_ROW_CLASSES: &str = "flex flex-wrap items-center gap-3 mt-6";
+const TAB_ROW_CLASSES: &str = "flex flex-wrap gap-1.5 mt-8 mb-3 pb-2 border-b border-neutral-800";
+const TAB_CLASSES: &str = "flex items-center gap-2 rounded-md px-3 py-1.5 text-sm text-neutral-400 cursor-pointer \
                            hover:text-neutral-100 hover:bg-neutral-800/60 transition-colors \
                            peer-checked:bg-neutral-800 peer-checked:text-neutral-100 \
                            peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-indigo-500";
@@ -116,8 +159,8 @@ const BASE64_BLOCK_BYTES: usize = 3;
 const BASE64_BLOCK_CHARACTERS: usize = 4;
 const BASE64_BITS: u32 = 6;
 
-const MODEL_HEADER: &str = "*model";
-const HARNESS_HEADER: &str = "*harness";
+const MODEL_HEADER: &str = "*model|the model at the thinking level its harness was asked for";
+const HARNESS_HEADER: &str = "*harness|the harness at the thinking level it was asked for";
 /// The cells in front of the columns of a row: the model.
 const MODEL_CELLS: usize = 1;
 /// The hues a series is coloured from, hashed from the name of its model.
@@ -561,11 +604,11 @@ struct Group {
 /// among equals.
 fn grouped<'a>(
     played: impl IntoIterator<Item = &'a Played>,
-    key: impl Fn(&Played) -> String,
+    key: impl Fn(&ava_wire::Setup) -> String,
 ) -> Vec<Group> {
     let mut groups: Vec<(String, Group)> = Vec::new();
     for run in played {
-        let key = key(run);
+        let key = key(&run.setup);
         let group = match groups.iter_mut().find(|(known, _)| *known == key) {
             Some((_, group)) => group,
             None => {
@@ -596,16 +639,36 @@ fn grouped<'a>(
     groups
 }
 
-fn agent_key(played: &Played) -> String {
-    played.setup.agent.label()
+/// The name of a setup along an axis of the report, its model or its harness.
+type Name = fn(&ava_wire::Setup) -> &str;
+
+fn model_name(setup: &ava_wire::Setup) -> &str {
+    &setup.agent.model
 }
 
-fn model_key(played: &Played) -> String {
-    played.setup.agent.model.clone()
+fn harness_name(setup: &ava_wire::Setup) -> &str {
+    &setup.agent.harness
 }
 
-fn harness_key(played: &Played) -> String {
-    played.setup.agent.harness.clone()
+/// `name` at the thinking level of `setup`, which is what models and
+/// harnesses are told apart by: one model at two levels is two of them.
+fn leveled(name: &str, setup: &ava_wire::Setup) -> String {
+    match setup.thinking.as_deref() {
+        Some(thinking) if !thinking.is_empty() => format!("{name} {thinking}"),
+        _ => name.to_string(),
+    }
+}
+
+fn agent_key(setup: &ava_wire::Setup) -> String {
+    setup.label()
+}
+
+fn model_key(setup: &ava_wire::Setup) -> String {
+    leveled(model_name(setup), setup)
+}
+
+fn harness_key(setup: &ava_wire::Setup) -> String {
+    leveled(harness_name(setup), setup)
 }
 
 /// The hue of `harness` among `harnesses`: spread evenly over the wheel,
@@ -636,28 +699,50 @@ fn grouped_by_harness(played: &[Played]) -> Vec<Group> {
 /// over the chosen ones under them.
 pub(crate) fn page(names: &[String]) -> std::io::Result<String> {
     let mut body = chooser(names)?;
-    body.push_str(&report(&records(names)?)?);
+    body.push_str(&report(&records(names)?, "")?);
 
     Ok(views::page(&[views::REPORTS_SECTION], &body))
 }
 
-/// The report over the tournaments `names` as a file of its own, headed by
-/// the title and when it was rendered, with the pages of the agents seated in
-/// them and of the runs played in them behind their links.
-pub(crate) fn file(names: &[String]) -> std::io::Result<String> {
-    let records = records(names)?;
+/// The report over `parts` as a file of its own, headed by the title, the
+/// parts behind a switch under it when there are several, with the pages of
+/// the agents seated in them and of every run on disk behind their links.
+pub(crate) fn file(parts: &[Part]) -> std::io::Result<String> {
     let registry = registry::load()?;
-    let mut front = heading();
-    front.push_str(&report(&records)?);
+    let mut front = masthead();
+    let mut agents = Vec::new();
+    match parts {
+        [part] if part.label.is_empty() => {
+            let records = records(&part.names)?;
+            front.push_str(&report(&records, "")?);
+            agents.extend(
+                records
+                    .iter()
+                    .flat_map(|record| views::seated_agents(record, &registry)),
+            );
+        }
+        _ => {
+            let mut panes = Vec::new();
+            for (index, part) in parts.iter().enumerate() {
+                let records = records(&part.names)?;
+                panes.push((
+                    views::escape(&part.label),
+                    report(&records, &format!("{PART_FIELD}{index}-"))?,
+                ));
+                agents.extend(
+                    records
+                        .iter()
+                        .flat_map(|record| views::seated_agents(record, &registry)),
+                );
+            }
+            front.push_str(&tabs(PART_FIELD, &PART_STYLE, &panes));
+        }
+    }
     let mut body = format!("<div class=\"{FRONT_CLASS}\">{front}</div>");
 
-    let mut agents: Vec<String> = records
-        .iter()
-        .flat_map(|record| views::seated_agents(record, &registry))
-        .collect();
     agents.sort();
     agents.dedup();
-    let mut runs = views::tournament_runs(names)?;
+    let mut runs = views::run_names()?;
     runs.sort();
     for agent in &agents {
         body.push_str(&subpage(
@@ -779,8 +864,9 @@ fn query(names: &[String]) -> String {
         .join("&")
 }
 
-/// The report over `records`, or the note saying why there is none.
-fn report(records: &[ava_wire::Tournament]) -> std::io::Result<String> {
+/// The report over `records`, or the note saying why there is none, its tabs
+/// on fields under `prefix`, so the parts of a file switch on their own.
+fn report(records: &[ava_wire::Tournament], prefix: &str) -> std::io::Result<String> {
     let registry = registry::load()?;
     if records.is_empty() {
         return Ok(note(NO_TOURNAMENTS_NOTE));
@@ -800,7 +886,7 @@ fn report(records: &[ava_wire::Tournament]) -> std::io::Result<String> {
     let mut tournaments = tournaments_table(records, &played);
     tournaments.push_str(&tournaments_chart(records, &by_model, &played));
     tournaments.push_str(&harness_chart(&by_agent));
-    let mut efficiency = group_table(&by_model, MODELS_TABLE, MODEL_HEADER, &COLUMNS);
+    let mut efficiency = group_table(&by_model, MODELS_TABLE, MODEL_HEADER, model_name, &COLUMNS);
     efficiency.push_str(&format!(
         "<div class=\"{}\">{}{}</div>",
         views::CHARTS_GRID_CLASSES,
@@ -859,7 +945,13 @@ fn report(records: &[ava_wire::Tournament]) -> std::io::Result<String> {
     ));
     efficiency.push_str(&pass_curve(&by_model));
     let by_harness = grouped_by_harness(&played);
-    let mut harnesses = group_table(&by_harness, HARNESSES_TABLE, HARNESS_HEADER, &COLUMNS);
+    let mut harnesses = group_table(
+        &by_harness,
+        HARNESSES_TABLE,
+        HARNESS_HEADER,
+        harness_name,
+        &COLUMNS,
+    );
     harnesses.push_str(&format!(
         "<div class=\"{}\">{}{}</div>",
         views::CHARTS_GRID_CLASSES,
@@ -917,41 +1009,70 @@ fn report(records: &[ava_wire::Tournament]) -> std::io::Result<String> {
         ),
     ));
     harnesses.push_str(&pass_curve(&by_harness));
-    let mut panes = vec![
-        ("quality", tournaments),
-        ("model efficiency", efficiency),
-        ("harness efficiency", harnesses),
-    ];
+    let mut subpanes = Vec::new();
     for record in records {
-        panes.push((
-            record.name.as_str(),
+        subpanes.push((
+            format!(
+                "{}<span class=\"{}\">{}</span>",
+                views::logo_cell(&record.game),
+                views::MONO_CLASSES,
+                views::escape(&record.name)
+            ),
             views::tournament_report(&record.name)?,
         ));
     }
-    body.push_str(&tabs(&panes));
+    let panes: Vec<(String, String)> = TAB_TITLES
+        .into_iter()
+        .map(views::escape)
+        .zip([
+            tournaments,
+            efficiency,
+            harnesses,
+            tabs(&format!("{prefix}{SUBTAB_FIELD}"), &SUBTAB_STYLE, &subpanes),
+            about()?,
+        ])
+        .collect();
+    body.push_str(&tabs(&format!("{prefix}{TAB_FIELD}"), &TAB_STYLE, &panes));
 
     Ok(body)
 }
 
-/// The name of the report over `names` as a file.
-pub(crate) fn file_name(names: &[String]) -> String {
+/// The name of the report over `parts` as a file: after the labels of the
+/// parts, after the tournaments of a part without one.
+pub(crate) fn file_name(parts: &[Part]) -> String {
     let mut name = FILE_PREFIX.to_string();
-    for chosen in names {
-        name.push_str(NAME_SEPARATOR);
-        name.push_str(chosen);
+    for part in parts {
+        let pieces: Vec<&str> = if part.label.is_empty() {
+            part.names.iter().map(String::as_str).collect()
+        } else {
+            vec![part.label.as_str()]
+        };
+        for piece in pieces {
+            name.push_str(NAME_SEPARATOR);
+            name.push_str(piece);
+        }
     }
     name.push_str(FILE_SUFFIX);
 
     name
 }
 
-/// The title of the file and when it was rendered.
-fn heading() -> String {
-    format!(
-        "<div class=\"{HEADING_ROW_CLASSES}\"><span class=\"{HEADING_CLASSES}\">{TITLE}</span></div>\
-         <p class=\"{SUBTITLE_CLASSES}\">{SUBTITLE} {}</p>",
-        usage::utc_date(usage::epoch_now())
-    )
+/// The front of the file, its title.
+fn masthead() -> String {
+    format!("<h1 class=\"{HEADING_CLASSES}\">{TITLE}</h1>")
+}
+
+/// What the report is, beside one of the characters walking, and the games
+/// under it.
+fn about() -> std::io::Result<String> {
+    Ok(format!(
+        "<div class=\"{} {ABOUT_CLASSES}\">{}<p class=\"{ABOUT_TEXT_CLASSES}\">{ABOUT}</p></div>\
+         <p class=\"{}\">games</p>{}",
+        views::CARD_CLASSES,
+        views::sprite(true),
+        views::TITLE_CLASSES,
+        views::games_report()?
+    ))
 }
 
 fn note(text: &str) -> String {
@@ -972,24 +1093,21 @@ fn harness_chart(agents: &[Group]) -> String {
         .collect();
     let mut harnesses: Vec<String> = scored
         .iter()
-        .map(|group| group.setup.agent.harness.clone())
+        .map(|group| harness_key(&group.setup))
         .collect();
     harnesses.sort();
     harnesses.dedup();
     let mut models: Vec<(f64, String)> = Vec::new();
     for group in &scored {
-        let model = &group.setup.agent.model;
-        if models.iter().any(|(_, known)| known == model) {
+        let model = model_key(&group.setup);
+        if models.iter().any(|(_, known)| *known == model) {
             continue;
         }
         let mut rounds = ava_wire::Tally::default();
-        for peer in scored
-            .iter()
-            .filter(|peer| peer.setup.agent.model == *model)
-        {
+        for peer in scored.iter().filter(|peer| model_key(&peer.setup) == model) {
             add_tally(&mut rounds, peer.sum.rounds);
         }
-        models.push((rounds.score().unwrap_or_default(), model.clone()));
+        models.push((rounds.score().unwrap_or_default(), model));
     }
     // The best model stands leftmost.
     models.sort_by(|left, right| right.0.total_cmp(&left.0));
@@ -1004,13 +1122,13 @@ fn harness_chart(agents: &[Group]) -> String {
             face: String::new(),
             points: scored
                 .iter()
-                .filter(|group| group.setup.agent.harness == *harness)
+                .filter(|group| harness_key(&group.setup) == *harness)
                 .filter_map(|group| {
                     let score = group.sum.score()?;
                     Some(chart::Point {
-                        x: slot(&group.setup.agent.model)? as f64,
+                        x: slot(&model_key(&group.setup))? as f64,
                         y: score * PERCENT,
-                        hover: format!("{}, score {score:.2}", group.setup.agent.label()),
+                        hover: format!("{}, score {score:.2}", group.setup.label()),
                     })
                 })
                 .collect(),
@@ -1028,8 +1146,8 @@ fn harness_chart(agents: &[Group]) -> String {
         icons: Vec::new(),
     };
 
-    let model = |group: &Group| group.setup.agent.model.clone();
-    let harness = |group: &Group| group.setup.agent.harness.clone();
+    let model = |group: &Group| model_key(&group.setup);
+    let harness = |group: &Group| harness_key(&group.setup);
     let (by_model, by_harness, rest) = variance_shares(&scored, &model, &harness);
 
     format!(
@@ -1105,36 +1223,50 @@ fn variance_shares(
     )
 }
 
-/// `panes`, each a title and its content, as tabs: a row of the titles and
-/// the content of the chosen one under it, the first to begin with. The tabs
-/// are radio buttons, so the file needs no script to switch them.
-fn tabs(panes: &[(&str, String)]) -> String {
+/// How a row of tabs looks: the classes of the row and of a tab.
+struct TabStyle {
+    row: &'static str,
+    tab: &'static str,
+}
+
+/// `panes`, each a label as markup and its content, as tabs: a row of the
+/// labels and the content of the chosen one under it, the first to begin
+/// with. The tabs are radio buttons sharing `field`, which also names their
+/// ids, their panes and the class of the box scoping their rules, so the file
+/// needs no script to switch them and rows nest on fields of their own.
+fn tabs(field: &str, style: &TabStyle, panes: &[(String, String)]) -> String {
+    let scope = format!("{field}s");
     let mut row = String::new();
     let mut content = String::new();
     let mut rules = String::new();
-    for (index, (title, pane)) in panes.iter().enumerate() {
+    for (index, (label, pane)) in panes.iter().enumerate() {
         let checked = if index == 0 { " checked" } else { "" };
         row.push_str(&format!(
-            "<span><input type=\"radio\" name=\"{TAB_FIELD}\" id=\"{TAB_FIELD}-{index}\" class=\"peer sr-only\"{checked}>\
-             <label for=\"{TAB_FIELD}-{index}\" class=\"{TAB_CLASSES}\">{}</label></span>",
-            views::escape(title)
+            "<span><input type=\"radio\" name=\"{field}\" id=\"{field}-{index}\" class=\"peer sr-only\"{checked}>\
+             <label for=\"{field}-{index}\" class=\"{}\">{label}</label></span>",
+            style.tab
         ));
-        content.push_str(&format!(
-            "<div class=\"{TAB_FIELD}-pane-{index}\">{pane}</div>"
-        ));
+        content.push_str(&format!("<div class=\"{field}-pane-{index}\">{pane}</div>"));
         rules.push_str(&format!(
-            ".{TABS_CLASS}:not(:has(#{TAB_FIELD}-{index}:checked)) .{TAB_FIELD}-pane-{index}{{display:none}}"
+            ".{scope}:not(:has(#{field}-{index}:checked)) .{field}-pane-{index}{{display:none}}"
         ));
     }
 
     format!(
-        "<div class=\"{TABS_CLASS}\"><style>{rules}</style><div class=\"{TAB_ROW_CLASSES}\">{row}</div>{content}</div>"
+        "<div class=\"{scope}\"><style>{rules}</style><div class=\"{}\">{row}</div>{content}</div>",
+        style.row
     )
 }
 
-/// The table `name` of `groups` over `columns`, one row per model, its
+/// The table `table` of `groups` over `columns`, one row per name, its
 /// headers sorting it, arriving sorted by the score when it has one.
-fn group_table(groups: &[Group], name: &str, first: &str, columns: &[Column]) -> String {
+fn group_table(
+    groups: &[Group],
+    table: &str,
+    first: &str,
+    name: Name,
+    columns: &[Column],
+) -> String {
     let mut headers = vec![first];
     headers.extend(columns.iter().map(|column| column.header()));
     let score = columns
@@ -1145,21 +1277,31 @@ fn group_table(groups: &[Group], name: &str, first: &str, columns: &[Column]) ->
     let rows = groups
         .iter()
         .map(|group| {
-            let mut row = vec![model_cell(&group.key)];
+            let mut row = vec![group_cell(group, name)];
             row.extend(columns.iter().map(|column| column.cell(&group.sum)));
             row
         })
         .collect();
 
-    views::sorted_table(name, score, &headers, rows, Some(NO_MODELS_NOTE))
+    views::sorted_table(table, score, &headers, rows, Some(NO_MODELS_NOTE))
 }
 
-/// The name of a model, as a cell.
-fn model_cell(model: &str) -> String {
+/// The name of `group` along `name`, as a cell: in mono, with the thinking
+/// level muted after it.
+fn group_cell(group: &Group, name: Name) -> String {
+    let level = match group.setup.thinking.as_deref() {
+        Some(thinking) if !thinking.is_empty() => format!(
+            " <span class=\"{}\">{}</span>",
+            views::MUTED_CLASSES,
+            views::escape(thinking)
+        ),
+        _ => String::new(),
+    };
+
     format!(
-        "<span class=\"{}\">{}</span>",
+        "<span class=\"{} whitespace-nowrap\">{}{level}</span>",
         views::MONO_CLASSES,
-        views::escape(model)
+        views::escape(name(&group.setup))
     )
 }
 
@@ -1293,13 +1435,12 @@ fn tournaments_table(records: &[ava_wire::Tournament], played: &[Played]) -> Str
     let rows = grouped(played, model_key)
         .iter()
         .map(|model| {
-            let name = &model.setup.agent.model;
-            let mut row = vec![model_cell(name), score_cell(Some(model))];
+            let mut row = vec![group_cell(model, model_name), score_cell(Some(model))];
             for index in 0..records.len() {
                 let own = grouped(
-                    played
-                        .iter()
-                        .filter(|run| run.tournament == index && run.setup.agent.model == *name),
+                    played.iter().filter(|run| {
+                        run.tournament == index && model_key(&run.setup) == model.key
+                    }),
                     model_key,
                 );
                 row.push(score_cell(own.first()));
@@ -1335,20 +1476,19 @@ fn tournaments_chart(
     let series: Vec<chart::Series> = models
         .iter()
         .map(|model| {
-            let name = &model.setup.agent.model;
             let mut series = group_series(model);
             for (index, record) in records.iter().enumerate() {
                 let own = grouped(
-                    played
-                        .iter()
-                        .filter(|run| run.tournament == index && run.setup.agent.model == *name),
+                    played.iter().filter(|run| {
+                        run.tournament == index && model_key(&run.setup) == model.key
+                    }),
                     model_key,
                 );
                 if let Some(score) = own.first().and_then(|own| own.sum.score()) {
                     series.points.push(chart::Point {
                         x: index as f64,
                         y: score * PERCENT,
-                        hover: format!("{name} in {}, score {score:.2}", record.name),
+                        hover: format!("{} in {}, score {score:.2}", model.key, record.name),
                     });
                 }
             }
@@ -1635,10 +1775,19 @@ mod tests {
         assert_eq!(super::percent_label(None), "");
         assert_eq!(super::mean(&[3.0, 1.0, 2.0]), Some(2.0));
         assert_eq!(super::mean(&[]), None);
+        let piece = |label: &str, names: &[&str]| super::Part {
+            label: label.to_string(),
+            names: names.iter().map(|name| name.to_string()).collect(),
+        };
         assert_eq!(
-            super::file_name(&["a".to_string(), "b".to_string()]),
+            super::file_name(&[piece("", &["a", "b"])]),
             "report-a-b.html"
         );
+        assert_eq!(
+            super::file_name(&[piece("max", &["a"]), piece("high", &["b"])]),
+            "report-max-high.html"
+        );
+        assert_eq!(super::file_name(&[]), "report.html");
     }
 
     #[test]

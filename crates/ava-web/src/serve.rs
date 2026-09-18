@@ -292,11 +292,14 @@ fn view(segments: &[&str], query: Option<&str>) -> Answer {
         [""] => views::runs_page(&notice, &selection, &pending),
         ["reports"] => report::page(&query_values(query, TOURNAMENT_FIELD)),
         ["report"] => {
-            let names = query_values(query, TOURNAMENT_FIELD);
+            let parts = [report::Part {
+                label: String::new(),
+                names: query_values(query, TOURNAMENT_FIELD),
+            }];
             if query_value(query, DOWNLOAD_FIELD).is_some() {
-                attachment = Some(report::file_name(&names));
+                attachment = Some(report::file_name(&parts));
             }
-            report::file(&names)
+            report::file(&parts)
         }
         ["scoreboard"] => views::scoreboard_page(&selection),
         ["agents"] => views::agents_page(&notice, &selection),

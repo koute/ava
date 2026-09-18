@@ -17,7 +17,7 @@ install:
 	cargo install --path crates/ava --locked --force
 
 report: install
-	ava report
+	ava report -p max -n tcc-parity-max -n chess-parity-max -n r2wars-parity-max -p high -n tcc-parity -n chess-parity -n r2wars-parity
 
 serve: install
 	ava image

@@ -394,6 +394,7 @@ impl ReportCli {
     const DESCRIPTION: &str = "write the report over tournaments as a file standing on its own";
 
     const NAME_SHORT: char = TournamentCli::NAME_SHORT;
+    const PART_SHORT: char = ImageCli::PROXY_SHORT;
     const DIRECTORY_SHORT: char = 'o';
 
     fn help() {
@@ -403,12 +404,37 @@ impl ReportCli {
             "a tournament of the report, repeatable, every tournament on disk without it",
         );
         arg_help_chr(
+            Self::PART_SHORT,
+            "open a part of the report under this label, the tournaments named after it are its own, the file switching between the parts",
+        );
+        arg_help_chr(
             Self::DIRECTORY_SHORT,
             &format!(
                 "the directory the file is written into, {} by default",
                 ava_web::report::DEFAULT_DIRECTORY
             ),
         );
+    }
+
+    /// Exit(1) when a tournament stands outside the parts or a part is empty.
+    fn require_arguments(command: &ava_web::report::Report) {
+        if command.parts.len() > 1 && command.parts.iter().any(|part| part.label.is_empty()) {
+            fail(&format!(
+                "a tournament was named before the first part, open every part with -{}",
+                Self::PART_SHORT
+            ));
+        }
+        if let Some(part) = command
+            .parts
+            .iter()
+            .find(|part| !part.label.is_empty() && part.names.is_empty())
+        {
+            fail(&format!(
+                "part `{}` names no tournament, add some with -{}",
+                part.label,
+                Self::NAME_SHORT
+            ));
+        }
     }
 }
 
@@ -509,9 +535,9 @@ impl Parser {
             Some(SubCommand::Analyze(ref command)) => AnalyzeCli::require_arguments(command),
             Some(SubCommand::Score(ref command)) => ScoreCli::require_arguments(command),
             Some(SubCommand::Tournament(ref command)) => TournamentCli::require_arguments(command),
+            Some(SubCommand::Report(ref command)) => ReportCli::require_arguments(command),
             Some(SubCommand::Image(_))
             | Some(SubCommand::Serve(_))
-            | Some(SubCommand::Report(_))
             | Some(SubCommand::Remote(_))
             | Some(SubCommand::Upstreams(_))
             | None => {}
@@ -700,7 +726,7 @@ impl Parser {
                     break;
                 }
 
-                // Image and serve
+                // Image, serve and report
                 ImageCli::PROXY_SHORT => match self.command {
                     Some(SubCommand::Image(ref mut command)) => command.proxy = true,
                     Some(SubCommand::Serve(ref mut command)) => {
@@ -710,12 +736,21 @@ impl Parser {
                             .unwrap_or_else(|_| bail(flag, "the port is a number"));
                         break;
                     }
+                    Some(SubCommand::Report(ref mut command)) => {
+                        let label = Self::value(args, &mut chars, flag, "missing part label");
+                        command.parts.push(ava_web::report::Part {
+                            label,
+                            names: Vec::new(),
+                        });
+                        break;
+                    }
                     _ => bail(
                         flag,
                         &format!(
-                            "only valid in the {} or {} subcommands",
+                            "only valid in the {}, {} or {} subcommands",
                             ImageCli::NAME,
-                            ServeCli::NAME
+                            ServeCli::NAME,
+                            ReportCli::NAME
                         ),
                     ),
                 },
@@ -763,7 +798,13 @@ impl Parser {
                     }
                     Some(SubCommand::Report(ref mut command)) => {
                         let name = Self::value(args, &mut chars, flag, "missing tournament name");
-                        command.names.push(name);
+                        match command.parts.last_mut() {
+                            Some(part) => part.names.push(name),
+                            None => command.parts.push(ava_web::report::Part {
+                                label: String::new(),
+                                names: vec![name],
+                            }),
+                        }
                         break;
                     }
                     _ => bail(

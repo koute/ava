@@ -2012,6 +2012,12 @@ fn weights_panel(
 /// Every game as a card: the name, its turns and the record on its face,
 /// the standings, the heatmap and the task folded behind it.
 pub(crate) fn games_page() -> std::io::Result<String> {
+    Ok(page(&[GAMES_SECTION], &games_report()?))
+}
+
+/// The games as their page shows them: one card per game over the runs it
+/// was played in, and the instructions shared by every game under them.
+pub(crate) fn games_report() -> std::io::Result<String> {
     let runs = collect_runs()?;
     let mut cards = String::new();
 
@@ -2036,7 +2042,7 @@ pub(crate) fn games_page() -> std::io::Result<String> {
         ));
     }
 
-    Ok(page(&[GAMES_SECTION], &body))
+    Ok(body)
 }
 
 /// The card of one game over the finished runs that `played` it, folding
@@ -2334,6 +2340,17 @@ fn resume_forms(name: &str, number: usize) -> String {
             "drop the runs and pairings the round holds and play every seat again",
             STOP_CLASSES
         ),
+    )
+}
+
+/// One of the vendored characters on a cover, walking or standing still.
+pub(crate) fn sprite(walking: bool) -> String {
+    let sheet = sprite_sheet();
+    let walk = if walking { SPRITE_WALKING_CLASSES } else { "" };
+
+    format!(
+        "<span class=\"{COVER_CLASSES}\"><span class=\"{SPRITE_CLASSES} {walk}\" {SPRITE_FIELD}=\"{sheet}\" \
+         style=\"background-image:url('{sheet}')\"></span></span>"
     )
 }
 
@@ -2758,12 +2775,7 @@ fn tournament_body(
 /// with a line for every pairing as its cover, and the pairing scheme, the
 /// seconds of a run and the analyst as its facts.
 fn tournament_card(record: &ava_wire::Tournament, walking: bool) -> String {
-    let sheet = sprite_sheet();
-    let walk = if walking { SPRITE_WALKING_CLASSES } else { "" };
-    let sprite = format!(
-        "<span class=\"{COVER_CLASSES}\"><span class=\"{SPRITE_CLASSES} {walk}\" {SPRITE_FIELD}=\"{sheet}\" \
-         style=\"background-image:url('{sheet}')\"></span></span>"
-    );
+    let sprite = sprite(walking);
 
     let run = format!(
         "<span class=\"{FACT_VALUE_CLASSES}\">{}s</span>",
@@ -4119,16 +4131,10 @@ pub(crate) fn seated_agents(
         .collect()
 }
 
-/// The runs played in the tournaments `names`, by name.
-pub(crate) fn tournament_runs(names: &[String]) -> std::io::Result<Vec<String>> {
+/// Every run on disk, by name.
+pub(crate) fn run_names() -> std::io::Result<Vec<String>> {
     Ok(collect_runs()?
         .into_iter()
-        .filter(|entry| {
-            entry
-                .placement
-                .as_ref()
-                .is_some_and(|placement| names.contains(&placement.tournament))
-        })
         .map(|entry| entry.name)
         .collect())
 }
