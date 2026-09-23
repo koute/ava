@@ -16,6 +16,11 @@ struct Inner {
     last_line: Option<u64>,
     repeats: u32,
     doom_looping: bool,
+    /// What the harness prints once it carries on with another model.
+    fallback_marker: Option<&'static [u8]>,
+    /// The tail of the stream a marker split between two reads starts in.
+    marker_carry: Vec<u8>,
+    fell_back: bool,
 }
 
 /// The agent output statistics shared between the reader threads and the run
@@ -25,7 +30,9 @@ pub(crate) struct Monitor {
 }
 
 impl Monitor {
-    pub(crate) fn new() -> Self {
+    /// A monitor watching for the refusal fallback marker of `harness`, if
+    /// it has one.
+    pub(crate) fn new(harness: &str) -> Self {
         Self {
             inner: std::sync::Mutex::new(Inner {
                 output_bytes: 0,
@@ -35,14 +42,19 @@ impl Monitor {
                 last_line: None,
                 repeats: 0,
                 doom_looping: false,
+                fallback_marker: crate::registry::refusal_fallback_marker(harness)
+                    .map(str::as_bytes),
+                marker_carry: Vec::new(),
+                fell_back: false,
             }),
         }
     }
 
     /// Start watching a new sandbox on the counters of the run.
     ///
-    /// The bytes are the console of the whole run, so they carry over, while
-    /// the silence clock and the repeat detector are about the process that is
+    /// The bytes are the console of the whole run, so they carry over, as does
+    /// a fallback, since the harness keeps the session on the other model. The
+    /// silence clock and the repeat detector are about the process that is
     /// live and start over with it.
     pub(crate) fn restart(&self) {
         let mut inner = self.lock();
@@ -52,6 +64,7 @@ impl Monitor {
         inner.last_line = None;
         inner.repeats = 0;
         inner.doom_looping = false;
+        inner.marker_carry.clear();
     }
 
     /// Count `chunk` and, on the line scanned stream, watch for repeats.
@@ -63,6 +76,8 @@ impl Monitor {
         if !scan_lines {
             return;
         }
+
+        inner.scan_fallback(chunk);
 
         let mut rest = chunk;
         while let Some(position) = rest.iter().position(|byte| *byte == b'\n') {
@@ -84,6 +99,12 @@ impl Monitor {
         self.lock().last_output.elapsed()
     }
 
+    /// Whether the harness reported answering with another model than the one
+    /// it was started on.
+    pub(crate) fn fell_back(&self) -> bool {
+        self.lock().fell_back
+    }
+
     /// Whether one line repeated often enough to look like a loop.
     pub(crate) fn doom_looping(&self) -> bool {
         self.lock().doom_looping
@@ -95,6 +116,21 @@ impl Monitor {
 }
 
 impl Inner {
+    fn scan_fallback(&mut self, chunk: &[u8]) {
+        let Some(marker) = self.fallback_marker else {
+            return;
+        };
+
+        let mut window = std::mem::take(&mut self.marker_carry);
+        window.extend_from_slice(chunk);
+        self.fell_back |= window
+            .windows(marker.len())
+            .any(|candidate| candidate == marker);
+
+        let kept = window.len().min(marker.len() - 1);
+        self.marker_carry = window.split_off(window.len() - kept);
+    }
+
     fn extend_line(&mut self, bytes: &[u8]) {
         std::hash::Hasher::write(&mut self.line_hasher, bytes);
         self.line_bytes += bytes.len();
@@ -119,5 +155,43 @@ impl Inner {
             self.last_line = Some(hash);
             self.repeats = 1;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    const FALLBACK_LINE: &[u8] = b"{\"type\":\"system\",\"subtype\":\"model_refusal_fallback\"}\n";
+
+    #[test]
+    fn fallback_is_seen_across_reads() {
+        let monitor = super::Monitor::new(crate::registry::CLAUDE_HARNESS);
+        let (first, second) = FALLBACK_LINE.split_at(FALLBACK_LINE.len() / 2);
+
+        monitor.observe(first, true);
+        assert!(!monitor.fell_back());
+        monitor.observe(second, true);
+        assert!(monitor.fell_back());
+    }
+
+    #[test]
+    fn fallback_is_only_read_from_the_event_stream() {
+        let monitor = super::Monitor::new(crate::registry::CLAUDE_HARNESS);
+        monitor.observe(FALLBACK_LINE, false);
+        assert!(!monitor.fell_back());
+    }
+
+    #[test]
+    fn fallback_outlives_a_restart() {
+        let monitor = super::Monitor::new(crate::registry::CLAUDE_HARNESS);
+        monitor.observe(FALLBACK_LINE, true);
+        monitor.restart();
+        assert!(monitor.fell_back());
+    }
+
+    #[test]
+    fn harness_without_marker_never_falls_back() {
+        let monitor = super::Monitor::new(crate::registry::PI_HARNESS);
+        monitor.observe(FALLBACK_LINE, true);
+        assert!(!monitor.fell_back());
     }
 }

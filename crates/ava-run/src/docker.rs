@@ -1552,7 +1552,10 @@ pub fn play(launch: &Launch, run: &str) -> std::io::Result<i32> {
     let collected = collect_logs(run, &proxy_container(run), ACCESS_LOG, ERROR_LOG);
     drain_scorer(run, &command.game);
     let attempts = collect_logs(run, &scorer_container(run), SCORE_LOG, SCORE_ERROR_LOG);
-    let entries = collect_entries(run);
+    let entries = match &status {
+        Err(error) if is_refusal_fallback(error) => Ok(()),
+        _ => collect_entries(run),
+    };
     remove_sidecars(run);
 
     let completed = match (&status, &collected, &attempts) {
@@ -1798,7 +1801,7 @@ fn run_sandbox(
         run_limit: limit,
         last_call: false,
         turn: 1,
-        monitor: std::sync::Arc::new(crate::monitor::Monitor::new()),
+        monitor: std::sync::Arc::new(crate::monitor::Monitor::new(&setup.agent.harness)),
     };
 
     // A budget of exactly the last call leaves the loop nothing to spend.
@@ -1810,6 +1813,7 @@ fn run_sandbox(
 
     match turn_loop(&sandbox, invocation, &mut phase, &|| Ok(true))? {
         Ending::Done(code) => Ok(code),
+        Ending::FellBack => Err(refusal_fallback(setup)),
         Ending::OutOfTime(_) | Ending::TurnOver(_) => last_call(&sandbox, &phase),
     }
 }
@@ -1839,15 +1843,17 @@ fn last_call(sandbox: &Sandbox, task: &Phase) -> std::io::Result<i32> {
         monitor: task.monitor.clone(),
     };
 
-    let ending = start_sandbox(sandbox, &invocation, &phase);
+    let code = match start_sandbox(sandbox, &invocation, &phase) {
+        Ok(Ending::FellBack) => return Err(refusal_fallback(&sandbox.setup)),
+        Ok(Ending::TurnOver(code) | Ending::Done(code) | Ending::OutOfTime(code)) => Ok(code),
+        Err(error) => Err(error),
+    };
 
     // Whatever the agent left is worth submitting even when the last call
     // itself never got going.
     last_chance(&sandbox.name, &sandbox.image);
 
-    match ending? {
-        Ending::TurnOver(code) | Ending::Done(code) | Ending::OutOfTime(code) => Ok(code),
-    }
+    code
 }
 
 /// Why the sandbox stopped.
@@ -1860,6 +1866,39 @@ enum Ending {
     Done(i32),
     /// The clock ran out, so the agent still gets its last call.
     OutOfTime(i32),
+    /// The backend refused the model and the harness carried on with another
+    /// one, so nothing the sandbox does from here on measures the model.
+    FellBack,
+}
+
+/// The error failing a sandbox whose harness fell back to another model.
+#[derive(Debug)]
+struct RefusalFallback {
+    model: String,
+}
+
+impl std::fmt::Display for RefusalFallback {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            formatter,
+            "the backend refused {} and the harness fell back to another model",
+            self.model
+        )
+    }
+}
+
+impl std::error::Error for RefusalFallback {}
+
+fn refusal_fallback(setup: &ava_wire::Setup) -> std::io::Error {
+    std::io::Error::other(RefusalFallback {
+        model: setup.agent.model.clone(),
+    })
+}
+
+fn is_refusal_fallback(error: &std::io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<RefusalFallback>())
 }
 
 /// A sandbox: a run's or an analyst's.
@@ -2241,6 +2280,7 @@ fn await_sandbox(
     let mut warned_silence = std::time::Duration::ZERO;
     let mut warned_looping = false;
     let mut out_of_time = false;
+    let mut fell_back = false;
     let scorer = scorer_container(name);
     log::info!(
         "{name}: turn {} of the agent has {} seconds",
@@ -2254,6 +2294,12 @@ fn await_sandbox(
 
         if crate::interrupt::interrupted() {
             log::warn!("the run was interrupted, killing {container}");
+        } else if monitor.fell_back() {
+            log::error!(
+                "{name}: the backend refused {} and the harness fell back to another model, stopping {container}",
+                sandbox.setup.agent.model
+            );
+            fell_back = true;
         } else if let Some(status) = exited {
             log::info!(
                 "{name}: turn {} of the agent exited with {status}",
@@ -2311,7 +2357,9 @@ fn await_sandbox(
             .output();
         let code = client.wait()?.code().unwrap_or(1);
 
-        return Ok(if out_of_time {
+        return Ok(if fell_back {
+            Ending::FellBack
+        } else if out_of_time {
             Ending::OutOfTime(code)
         } else {
             Ending::Done(code)
@@ -2528,7 +2576,7 @@ pub fn analyze(command: &Analyze) -> std::io::Result<i32> {
         run_limit: analyst.limit,
         last_call: false,
         turn: 1,
-        monitor: std::sync::Arc::new(crate::monitor::Monitor::new()),
+        monitor: std::sync::Arc::new(crate::monitor::Monitor::new(&sandbox.setup.agent.harness)),
     };
 
     // Written before the turns, so the run page names the analyst while it
@@ -2590,9 +2638,10 @@ fn analysis_turns(
         report_written(&holder).map(|written| !written)
     })?;
 
-    Ok(match ending {
-        Ending::TurnOver(code) | Ending::Done(code) | Ending::OutOfTime(code) => code,
-    })
+    match ending {
+        Ending::TurnOver(code) | Ending::Done(code) | Ending::OutOfTime(code) => Ok(code),
+        Ending::FellBack => Err(refusal_fallback(&sandbox.setup)),
+    }
 }
 
 /// Whether the analyst wrote its report.

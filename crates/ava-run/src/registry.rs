@@ -27,8 +27,8 @@ const PROXY_PORT: u16 = 8080;
 const TLS_SCHEME: &str = "https";
 const PLAIN_SCHEME: &str = "http";
 
-const CLAUDE_HARNESS: &str = "claude";
-const PI_HARNESS: &str = "pi";
+pub(crate) const CLAUDE_HARNESS: &str = "claude";
+pub(crate) const PI_HARNESS: &str = "pi";
 const OPENCODE_HARNESS: &str = "opencode";
 const CODEX_HARNESS: &str = "codex";
 
@@ -185,6 +185,20 @@ const COMPACTION_MARKERS: [(&str, &str); 4] = [
 /// The text `harness` prints once per compaction of its session.
 pub fn compaction_marker(harness: &str) -> Option<&'static str> {
     COMPACTION_MARKERS
+        .iter()
+        .find(|(name, _)| *name == harness)
+        .map(|(_, marker)| *marker)
+}
+
+/// What each harness prints when the backend refused the model it was started
+/// on and it carries the session on with another model instead.
+const REFUSAL_FALLBACK_MARKERS: [(&str, &str); 1] =
+    [(CLAUDE_HARNESS, "\"subtype\":\"model_refusal_fallback\"")];
+
+/// The text `harness` prints once it answers with another model than the one
+/// it was started on, after a refusal.
+pub fn refusal_fallback_marker(harness: &str) -> Option<&'static str> {
+    REFUSAL_FALLBACK_MARKERS
         .iter()
         .find(|(name, _)| *name == harness)
         .map(|(_, marker)| *marker)
