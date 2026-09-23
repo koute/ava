@@ -1,11 +1,10 @@
-# The image of the tcc-opt game: the pinned tinycc tree as the scaffold, a
+# The image of the tcc-opt game: the vendored tinycc tree as the scaffold, a
 # bootstrap tcc built from it to build the submissions with, the sources of the
 # test suites with the deflate fixture, and the tools the suites build with.
 ARG BASE
 
 FROM ubuntu:26.04@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b AS toolchain
 
-ARG TINYCC_COMMIT="0fb54300b56512754221d80adda85ddb9815bceb"
 ARG ZLIB_VERSION="1.3.1"
 ARG ZLIB_SHA256="9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
 ARG SQLITE_RELEASE="3500400"
@@ -14,13 +13,10 @@ ARG LIBPNG_VERSION="1.6.50"
 ARG LIBPNG_SHA256="708f4398f996325819936d447f982e0db90b6b8212b7507e7672ea232210949a"
 
 RUN apt update && \
-	apt install -y --no-install-recommends ca-certificates curl git build-essential unzip python3 && \
+	apt install -y --no-install-recommends ca-certificates curl build-essential unzip python3 && \
 	rm -rf /var/lib/apt/lists/*
 
-RUN git init --quiet /opt/scaffold/tinycc && \
-	git -C /opt/scaffold/tinycc fetch --quiet --depth 1 https://repo.or.cz/tinycc.git "${TINYCC_COMMIT}" && \
-	git -C /opt/scaffold/tinycc checkout --quiet FETCH_HEAD && \
-	rm -rf /opt/scaffold/tinycc/.git
+ADD tcc-opt/tinycc.tar.gz /opt/scaffold/tinycc/
 
 RUN cp -r /opt/scaffold/tinycc /tmp/tinycc && \
 	cd /tmp/tinycc && \
