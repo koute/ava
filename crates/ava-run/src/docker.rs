@@ -1513,6 +1513,7 @@ pub fn run_agent(command: &Agent) -> std::io::Result<i32> {
 /// against them and removes everything afterwards. Since the proxy serves one
 /// run, its access log describes that run alone.
 pub fn play(launch: &Launch, run: &str) -> std::io::Result<i32> {
+    let _awake = process::Awake::hold();
     let command = &launch.command;
     let staging = std::env::temp_dir().join(STAGING_DIRECTORY).join(run);
     let image = pin_image(&launch.identity, &launch.setup.agent.harness, run)?;
@@ -1679,6 +1680,7 @@ pub fn fight(
     combats: u64,
     log: &std::path::Path,
 ) -> std::io::Result<ava_wire::Tally> {
+    let _awake = process::Awake::hold();
     let played = ava_game::find(game).ok_or_else(|| {
         crate::registry::unknown(game, "game", ava_game::GAMES.iter().map(|game| game.name()))
     })?;
@@ -2516,6 +2518,7 @@ fn exists(arguments: &[&str]) -> std::io::Result<bool> {
 ///
 /// Turns of the harness on the run and the book, without a git or score host.
 pub fn analyze(command: &Analyze) -> std::io::Result<i32> {
+    let _awake = process::Awake::hold();
     let run = command.run.as_str();
     let directory = std::path::Path::new(RUN_DIRECTORY).join(run);
     if !directory.join(RUN_FILE).is_file() {

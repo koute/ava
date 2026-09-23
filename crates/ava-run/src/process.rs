@@ -75,11 +75,82 @@ pub fn run_within(
     Ok(written.trim().to_string())
 }
 
+/// The tool macOS ships for holding a power assertion while it runs.
+const CAFFEINATE: &str = "/usr/bin/caffeinate";
+
+/// Keep the host from idle sleeping for as long as the process named after
+/// `-w` lives.
+const CAFFEINATE_ARGUMENTS: [&str; 2] = ["-i", "-w"];
+
+/// Keeps a macOS host from idle sleeping until it is dropped, and does nothing
+/// elsewhere.
+///
+/// A sleeping host stalls the requests in flight and stops the clock bounding
+/// a run while the clocks in the containers keep counting. The assertion is
+/// tied to the `ava` process, so it ends with it even when the drop never runs.
+pub struct Awake {
+    caffeinate: Option<std::process::Child>,
+}
+
+impl Awake {
+    /// Hold the host awake until the returned value is dropped.
+    pub fn hold() -> Self {
+        if !cfg!(target_os = "macos") {
+            return Self { caffeinate: None };
+        }
+
+        let spawned = std::process::Command::new(CAFFEINATE)
+            .args(CAFFEINATE_ARGUMENTS)
+            .arg(std::process::id().to_string())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+
+        match spawned {
+            Ok(child) => Self {
+                caffeinate: Some(child),
+            },
+            Err(error) => {
+                log::warn!("{CAFFEINATE} did not start, the host may sleep: {error}");
+                Self { caffeinate: None }
+            }
+        }
+    }
+}
+
+impl Drop for Awake {
+    fn drop(&mut self) {
+        if let Some(caffeinate) = &mut self.caffeinate {
+            let _ = caffeinate.kill();
+            let _ = caffeinate.wait();
+        }
+    }
+}
+
 /// Log what `program` wrote to its standard error, which is where it logs.
 fn relay(program: &str, stderr: &[u8]) {
     let written = String::from_utf8_lossy(stderr);
 
     for line in written.lines().filter(|line| !line.trim().is_empty()) {
         log::info!("{program}: {line}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn awake_holds_caffeinate_until_dropped() {
+        let awake = super::Awake::hold();
+        let pid = awake
+            .caffeinate
+            .as_ref()
+            .expect("caffeinate ships with macOS")
+            .id() as i32;
+        assert!(super::alive(pid));
+
+        drop(awake);
+        assert!(!super::alive(pid));
     }
 }
