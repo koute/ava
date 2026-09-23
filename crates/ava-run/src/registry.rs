@@ -279,6 +279,16 @@ pub struct Endpoint {
 impl Backend {
     /// Where the proxy connects for this backend.
     pub fn endpoint(&self) -> std::io::Result<Endpoint> {
+        if self.host.contains([':', '/']) {
+            return Err(std::io::Error::new(
+                INVALID,
+                format!(
+                    "`{}` is not a host name; put the address with the port in `upstream`",
+                    self.host
+                ),
+            ));
+        }
+
         let Some(upstream) = &self.upstream else {
             return Ok(Endpoint {
                 host: self.host.clone(),
@@ -1586,6 +1596,18 @@ mod tests {
         assert_eq!(provider["options"]["apiKey"], "{env:OPENCODE_API_KEY}");
         assert_eq!(provider["models"]["z-free"]["limit"]["context"], 1024);
         assert_eq!(provider["models"]["z-free"]["limit"]["output"], 256);
+    }
+
+    #[test]
+    fn backend_host_with_port() {
+        let with_port = REGISTRY.replace(r#""host": "o.example""#, r#""host": "10.0.0.1:9002""#);
+        let Err(error) = super::parse(&with_port, AGENTS) else {
+            panic!(
+                "registry parse success for a host with a port; the sandbox would then use http://10.0.0.1:9002:8080"
+            );
+        };
+        assert!(super::is_invalid(&error));
+        assert!(error.to_string().contains("upstream"), "{error}");
     }
 
     #[test]
