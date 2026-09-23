@@ -209,6 +209,15 @@ const COMPACTION_MARKERS: [(&str, &str); 5] = [
 
 const SESSION_FILES: [(&str, &str); 1] = [(LT_HARNESS, LT_SESSION_FILE)];
 
+const STOP_SECONDS: [(&str, u64); 1] = [(LT_HARNESS, 10)];
+
+pub fn stop_seconds(harness: &str) -> Option<u64> {
+    STOP_SECONDS
+        .iter()
+        .find(|(name, _)| *name == harness)
+        .map(|(_, seconds)| *seconds)
+}
+
 pub fn session_file(harness: &str) -> Option<&'static str> {
     SESSION_FILES
         .iter()

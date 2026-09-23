@@ -2386,9 +2386,7 @@ fn await_sandbox(
             continue;
         }
 
-        let _ = std::process::Command::new("docker")
-            .args(["kill", &container])
-            .output();
+        stop_container(&container, &sandbox.setup.agent.harness);
         let code = client.wait()?.code().unwrap_or(1);
 
         return Ok(if fell_back {
@@ -2399,6 +2397,20 @@ fn await_sandbox(
             Ending::Done(code)
         });
     }
+}
+
+fn stop_container(container: &str, harness: &str) {
+    let stop_seconds = crate::registry::stop_seconds(harness)
+        .filter(|_| !crate::interrupt::interrupted())
+        .map(|seconds| seconds.to_string());
+    let arguments = match &stop_seconds {
+        Some(seconds) => vec!["stop", "-t", seconds, container],
+        None => vec!["kill", container],
+    };
+
+    let _ = std::process::Command::new("docker")
+        .args(arguments)
+        .output();
 }
 
 /// Write generated configuration to a staging file and mount it read only.
