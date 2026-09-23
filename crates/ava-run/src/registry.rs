@@ -42,10 +42,21 @@ const OPENCODE_CONFIG_FILE: &str = "/home/agent/.config/opencode/opencode.json";
 
 const OPENCODE_API_PATH: &str = "/v1";
 
+/// The provider opencode ships for zen, whose name is what makes opencode
+/// identify itself there.
+const ZEN_PROVIDER: &str = "opencode";
+
+/// The variable opencode reads a zen key from inside the sandbox.
+const ZEN_TOKEN: &str = "OPENCODE_API_KEY";
+
+/// The shape zen answers its own models in.
+const ZEN_ADAPTER: &str = "@ai-sdk/openai";
+
 /// The staged files, vendored as plain assets whose `__AVA_*__` placeholders
 /// are filled by [`template`].
 const CODEX_CONFIGURATION_TEMPLATE: &str = include_str!("../assets/codex-config.toml");
 const OPENCODE_CONFIGURATION_TEMPLATE: &str = include_str!("../assets/opencode.json");
+const ZEN_CONFIGURATION_TEMPLATE: &str = include_str!("../assets/opencode-zen.json");
 const PI_MODELS_TEMPLATE: &str = include_str!("../assets/pi-models.json");
 
 /// What one start of a harness is: the turn that opens the session, or a turn
@@ -96,32 +107,29 @@ const PI_THINKING: &str = "--thinking";
 /// line, without which a run leaves no live log.
 const CLAUDE_PRINT: [&str; 4] = ["--print", "--verbose", "--output-format", "stream-json"];
 
-/// The output tokens claude code 2.1.247 asks for per request: the default of
-/// its model catalog, or the fallback for a model the catalog does not know.
-const CATALOG_TURN_OUTPUT: u32 = 64_000;
-const FALLBACK_TURN_OUTPUT: u32 = 32_000;
-
-/// The models with the larger catalog default.
-const CATALOG_MODELS: [&str; 7] = [
-    "claude-opus-4-6",
-    "claude-opus-4-7",
-    "claude-opus-4-8",
-    "claude-opus-5",
-    "claude-sonnet-5",
-    "claude-fable-5",
-    "claude-mythos-5",
+/// The output tokens claude code 2.1.280 asks for per request, by model, and
+/// the fallback for a model its catalog does not know.
+const CATALOG_OUTPUTS: [(&str, u32); 8] = [
+    ("claude-opus-4-6", 64_000),
+    ("claude-opus-4-7", 64_000),
+    ("claude-opus-4-8", 64_000),
+    ("claude-opus-5", 64_000),
+    ("claude-opus-5-5", 128_000),
+    ("claude-sonnet-5", 64_000),
+    ("claude-fable-5", 64_000),
+    ("claude-mythos-5", 64_000),
 ];
+const FALLBACK_TURN_OUTPUT: u32 = 32_000;
 
 /// The `max_output` of a route capped to what claude code sends for the model,
 /// matched by its registry name or the last segment of its route id.
 fn turn_output(model: &Model, route: &Route) -> u32 {
     let gateway_id = route.id.rsplit('/').next().unwrap_or(&route.id);
-    let cap =
-        if CATALOG_MODELS.contains(&model.name.as_str()) || CATALOG_MODELS.contains(&gateway_id) {
-            CATALOG_TURN_OUTPUT
-        } else {
-            FALLBACK_TURN_OUTPUT
-        };
+    let cap = CATALOG_OUTPUTS
+        .iter()
+        .find(|(name, _)| *name == model.name || *name == gateway_id)
+        .map(|(_, output)| *output)
+        .unwrap_or(FALLBACK_TURN_OUTPUT);
 
     route.max_output.min(cap)
 }
@@ -208,6 +216,8 @@ pub enum Service {
     Anthropic,
     /// An openapi gateway, reached with a gateway key.
     OpenApi,
+    /// The zen gateway of opencode, reached with a zen key.
+    Zen,
 }
 
 impl Service {
@@ -216,6 +226,7 @@ impl Service {
         match self {
             Self::Anthropic => "anthropic",
             Self::OpenApi => "openapi",
+            Self::Zen => "zen",
         }
     }
 }
@@ -229,6 +240,10 @@ pub struct Backend {
     pub service: Service,
     /// The host the proxy forwards to, which the sandbox resolves to loopback.
     pub host: String,
+    /// What the paths of the service hang under at the host, empty for a
+    /// service answering at the root.
+    #[serde(default)]
+    pub path: String,
     /// The environment variable holding the credential of the backend.
     pub key: String,
     /// Where the proxy connects instead of dialling the host over TLS, as
@@ -283,7 +298,7 @@ impl Backend {
     /// a sandbox sends leaves it as ciphertext, so every request stays
     /// inspectable.
     fn url(&self) -> String {
-        format!("http://{}:{PROXY_PORT}", self.host)
+        format!("http://{}:{PROXY_PORT}{}", self.host, self.path)
     }
 
     /// The credential of the backend, read from the environment of this
@@ -898,18 +913,44 @@ fn template(asset: &str, values: &[(&str, &str)]) -> String {
         })
 }
 
-/// Declare the gateway model to opencode before naming it on the command line.
-///
-/// opencode resolves a model against its own catalog and refuses an id it does
-/// not know, so the model is added to the provider it already ships. The same
-/// model serves the side agents, which would otherwise reach for a model the
-/// gateway does not carry.
+/// Run opencode on the model of `route`, served by the gateway or by zen.
 fn opencode_invocation(
     route: &Route,
     backend: &Backend,
     prompt: &str,
     output: u32,
     start: Start,
+) -> std::io::Result<Invocation> {
+    let mut invocation = match backend.service {
+        Service::Zen => zen_invocation(route, backend, output)?,
+        _ => opencode_gateway_invocation(route, backend, output)?,
+    };
+
+    // The run command reads the model from the configuration and takes no
+    // model argument, so the gateway arguments are replaced.
+    invocation.arguments = OPENCODE_RUN
+        .iter()
+        .map(|argument| argument.to_string())
+        .collect();
+    if start == Start::Resume {
+        invocation.arguments.push(OPENCODE_CONTINUE.to_string());
+    }
+    invocation.arguments.push(prompt.to_string());
+    invocation.arguments.push(OPENCODE_LOGS.to_string());
+
+    Ok(invocation)
+}
+
+/// Declare the gateway model to opencode before naming it on the command line.
+///
+/// opencode resolves a model against its own catalog and refuses an id it does
+/// not know, so the model is added to the provider it already ships. The same
+/// model serves the side agents, which would otherwise reach for a model the
+/// gateway does not carry.
+fn opencode_gateway_invocation(
+    route: &Route,
+    backend: &Backend,
+    output: u32,
 ) -> std::io::Result<Invocation> {
     let mut invocation = gateway_invocation(OPENCODE_HARNESS, route, backend)?;
     let url = gateway_url(OPENCODE_HARNESS, backend)?;
@@ -934,23 +975,52 @@ fn opencode_invocation(
         ],
     );
 
-    // The run command reads the model from the configuration and takes no
-    // model argument, so the gateway arguments are replaced.
-    invocation.arguments = OPENCODE_RUN
-        .iter()
-        .map(|argument| argument.to_string())
-        .collect();
-    if start == Start::Resume {
-        invocation.arguments.push(OPENCODE_CONTINUE.to_string());
-    }
-    invocation.arguments.push(prompt.to_string());
-
-    invocation.arguments.push(OPENCODE_LOGS.to_string());
     invocation
         .files
         .push((OPENCODE_CONFIG_FILE.to_string(), configuration));
 
     Ok(invocation)
+}
+
+/// Declare the zen model under the provider opencode ships for zen.
+///
+/// The free models of zen answer a request only when opencode itself asks, and
+/// opencode identifies itself to zen for every provider whose name begins with
+/// its own, so the model is declared under that name rather than under one of
+/// ours. Zen serves these models the responses shape, which is the adapter the
+/// model carries.
+fn zen_invocation(route: &Route, backend: &Backend, output: u32) -> std::io::Result<Invocation> {
+    Ok(Invocation {
+        variables: vec![(ZEN_TOKEN.to_string(), backend.credential()?)],
+        files: vec![(
+            OPENCODE_CONFIG_FILE.to_string(),
+            zen_configuration(route, backend, output),
+        )],
+        ..Default::default()
+    })
+}
+
+/// The opencode configuration reaching `route` on zen through the proxy.
+fn zen_configuration(route: &Route, backend: &Backend, output: u32) -> String {
+    let model = format!("{ZEN_PROVIDER}/{}", route.id);
+    let url = format!("{}{OPENCODE_API_PATH}", backend.url());
+
+    template(
+        ZEN_CONFIGURATION_TEMPLATE,
+        &[
+            ("__AVA_MODEL__", model.as_str()),
+            ("__AVA_PROVIDER__", ZEN_PROVIDER),
+            ("__AVA_BASE_URL__", url.as_str()),
+            ("__AVA_TOKEN__", ZEN_TOKEN),
+            ("__AVA_ADAPTER__", ZEN_ADAPTER),
+            ("\"__AVA_MODEL_ID__\"", quoted(&route.id).as_str()),
+            (
+                "\"__AVA_CONTEXT__\"",
+                route.context_window.to_string().as_str(),
+            ),
+            ("\"__AVA_OUTPUT__\"", output.to_string().as_str()),
+        ],
+    )
 }
 
 /// Ask the harness for `thinking` under the `option` naming it.
@@ -1073,12 +1143,19 @@ fn codex_invocation(
 /// unknown model id under it, which is how a gateway model reaches them.
 fn gateway_url(harness: &str, backend: &Backend) -> std::io::Result<String> {
     if backend.service != Service::OpenApi {
-        return Err(std::io::Error::other(format!(
-            "the {harness} harness reaches models only through an openapi gateway"
-        )));
+        return Err(unserved(harness, backend));
     }
 
     Ok(backend.url())
+}
+
+/// The error refusing `harness` a backend of a service it does not speak.
+fn unserved(harness: &str, backend: &Backend) -> std::io::Error {
+    std::io::Error::other(format!(
+        "the {harness} harness reaches no model through the {} service of the {} backend",
+        backend.service.name(),
+        backend.name
+    ))
 }
 
 fn gateway_invocation(
@@ -1123,6 +1200,7 @@ fn claude_invocation(
             environment.push((CLAUDE_MODEL.to_string(), route.id.clone()));
             environment.push((SUBSCRIPTION_TOKEN.to_string(), backend.credential()?));
         }
+        Service::Zen => return Err(unserved(CLAUDE_HARNESS, backend)),
         Service::OpenApi => {
             for name in CLAUDE_TIER_SETTINGS {
                 environment.push((name.to_string(), route.id.clone()));
@@ -1312,7 +1390,8 @@ mod tests {
         "backends": [
             {"name": "direct", "service": "anthropic", "host": "a.example", "key": "A"},
             {"name": "gateway", "service": "openapi", "host": "g.example", "key": "G"},
-            {"name": "other", "service": "openapi", "host": "o.example", "key": "O"}
+            {"name": "other", "service": "openapi", "host": "o.example", "key": "O"},
+            {"name": "zen", "service": "zen", "host": "z.example", "path": "/zen", "key": "Z"}
         ],
         "models": [
             {"name": "m", "routes": [
@@ -1320,11 +1399,15 @@ mod tests {
                  "price": {"input": 2.0, "output": 10.0, "cache_read": 0.2, "cache_write": 2.5}},
                 {"backend": "gateway", "id": "m-gateway", "context_window": 1, "max_output": 1},
                 {"backend": "other", "id": "m-other", "context_window": 1, "max_output": 1}
+            ]},
+            {"name": "z", "routes": [
+                {"backend": "zen", "id": "z-free", "context_window": 1024, "max_output": 512}
             ]}
         ],
         "harnesses": [
             {"name": "claude", "services": ["anthropic", "openapi"]},
-            {"name": "pi", "services": ["openapi"]}
+            {"name": "pi", "services": ["openapi"]},
+            {"name": "opencode", "services": ["openapi", "zen"]}
         ]
     }"#;
     const AGENTS: &str = r#"[
@@ -1464,6 +1547,34 @@ mod tests {
     }
 
     #[test]
+    fn only_a_harness_speaking_zen_reaches_a_model_served_there() {
+        let registry = super::parse(REGISTRY, AGENTS).unwrap();
+
+        assert_eq!(registry.route("opencode", "z", None).unwrap().1.name, "zen");
+        assert!(registry.route("pi", "z", None).is_err());
+        assert!(registry.route("claude", "z", None).is_err());
+    }
+
+    #[test]
+    fn opencode_reaches_zen_under_the_provider_it_ships_and_the_path_of_the_backend() {
+        let registry = super::parse(REGISTRY, AGENTS).unwrap();
+        let (route, backend) = registry.route("opencode", "z", None).unwrap();
+
+        let configuration: serde_json::Value =
+            serde_json::from_str(&super::zen_configuration(route, backend, 256)).unwrap();
+        let provider = &configuration["provider"][super::ZEN_PROVIDER];
+
+        assert_eq!(configuration["model"], "opencode/z-free");
+        assert_eq!(
+            provider["options"]["baseURL"],
+            "http://z.example:8080/zen/v1"
+        );
+        assert_eq!(provider["options"]["apiKey"], "{env:OPENCODE_API_KEY}");
+        assert_eq!(provider["models"]["z-free"]["limit"]["context"], 1024);
+        assert_eq!(provider["models"]["z-free"]["limit"]["output"], 256);
+    }
+
+    #[test]
     fn a_turn_spends_what_claude_code_sends_for_the_model() {
         let direct = route("claude-opus-5", 128_000);
         let gateway = route("openrouter/anthropic/claude-opus-5", 128_000);
@@ -1471,6 +1582,13 @@ mod tests {
 
         assert_eq!(super::turn_output(&model("claude-opus-5"), &direct), 64_000);
         assert_eq!(super::turn_output(&model("opus"), &gateway), 64_000);
+        assert_eq!(
+            super::turn_output(
+                &model("claude-opus-5-5"),
+                &route("openrouter/anthropic/claude-opus-5.5", 128_000)
+            ),
+            128_000
+        );
         assert_eq!(super::turn_output(&model("glm-5.3"), &unknown), 32_000);
         assert_eq!(
             super::turn_output(

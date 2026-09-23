@@ -19,6 +19,12 @@ const PROBE: &str =
 
 const GATEWAY_KEY_INFO_PATH: &str = "/key/info";
 
+/// Zen keeps no account state of its own, so its model listing is all there
+/// is to ask it for.
+const ZEN_MODELS_PATH: &str = "/v1/models";
+const ZEN_MODELS_FIELD: &str = "data";
+const ZEN_MODEL_FIELD: &str = "id";
+
 /// The header prefixes the proxy captures.
 const LIMIT_HEADER_PREFIXES: [&str; 3] = ["anthropic-ratelimit-", "x-ratelimit-", "x-litellm-key-"];
 const ANTHROPIC_LIMIT_PREFIX: &str = "anthropic-ratelimit-unified-";
@@ -161,6 +167,7 @@ pub fn limits(backend: &Backend, registry: &Registry) -> std::io::Result<String>
     match backend.service {
         Service::Anthropic => anthropic_limits(backend, registry, &credential),
         Service::OpenApi => gateway_limits(backend, &credential),
+        Service::Zen => zen_limits(backend, registry, &credential),
     }
 }
 
@@ -222,6 +229,44 @@ fn gateway_limits(backend: &Backend, credential: &str) -> std::io::Result<String
         .collect();
 
     Ok(pairs.join(" "))
+}
+
+/// Zen reports neither a budget nor a rate limit, so what is left to ask it is
+/// whether it still serves the models routed to it, which a free model offered
+/// for a while stops being. What the backend spent is the recorded usage.
+fn zen_limits(backend: &Backend, registry: &Registry, credential: &str) -> std::io::Result<String> {
+    let url = format!("https://{}{}{ZEN_MODELS_PATH}", backend.host, backend.path);
+    let (_, body) = request(&url, credential, &[], None)?;
+    let listing: serde_json::Value = serde_json::from_str(&body).map_err(|error| {
+        std::io::Error::other(format!("{url}: the model listing does not parse: {error}"))
+    })?;
+
+    let served: Vec<&str> = listing[ZEN_MODELS_FIELD]
+        .as_array()
+        .map(|models| {
+            models
+                .iter()
+                .filter_map(|model| model[ZEN_MODEL_FIELD].as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+    let gone: Vec<&str> = registry
+        .models
+        .iter()
+        .flat_map(|model| &model.routes)
+        .filter(|route| route.backend == backend.name)
+        .map(|route| route.id.as_str())
+        .filter(|id| !served.contains(id))
+        .collect();
+
+    if !gone.is_empty() {
+        return Err(std::io::Error::other(format!(
+            "{url} no longer serves {}",
+            gone.join(", ")
+        )));
+    }
+
+    Ok(String::new())
 }
 
 type Headers = Vec<(String, String)>;
