@@ -2024,6 +2024,7 @@ fn start_sandbox(
     ]);
 
     docker.args(home_mounts(&sandbox.name));
+    docker.args(&invocation.sandbox_options);
 
     docker.args(["--hostname", harness]);
     docker.args(["--add-host", &format!("{harness}:{SANDBOX_LOOPBACK}")]);
