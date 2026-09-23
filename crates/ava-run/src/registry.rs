@@ -207,6 +207,15 @@ const COMPACTION_MARKERS: [(&str, &str); 5] = [
     (LT_HARNESS, "--- Context compacted ---"),
 ];
 
+const SESSION_FILES: [(&str, &str); 1] = [(LT_HARNESS, LT_SESSION_FILE)];
+
+pub fn session_file(harness: &str) -> Option<&'static str> {
+    SESSION_FILES
+        .iter()
+        .find(|(name, _)| *name == harness)
+        .map(|(_, path)| *path)
+}
+
 /// The text `harness` prints once per compaction of its session.
 pub fn compaction_marker(harness: &str) -> Option<&'static str> {
     COMPACTION_MARKERS

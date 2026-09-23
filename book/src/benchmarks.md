@@ -61,7 +61,7 @@ lt runs every command of the agent in its own sandbox: a FUSE mount in a user na
 
 The container still doesn't have `CAP_SYS_ADMIN`, so the root filesystem remains read only: a process in a user namespace cannot remount a mount of the parent namespace as writable. lt runs don't have a seccomp filter or an AppArmor profile. On a host that restricts unprivileged user namespaces, Ubuntu since 24.04 with `kernel.apparmor_restrict_unprivileged_userns=1`, lt cannot mount; set `sysctl kernel.apparmor_restrict_unprivileged_userns=0` there.
 
-lt runs as `lt do --oneshot --apply-when-done`: a turn ends when the model calls the `finish` tool. lt captures the writes of the agent in its session file. git commands in the lt sandbox read the captured files, so a push includes the changes. `--apply-when-done` writes them to the workspace volume when lt exits. ava passes the key of the backend to lt in `LT_API_KEY`, and lt uses the messages API of the gateway.
+lt runs as `lt do --oneshot --apply-when-done`: a turn ends when the model calls the `finish` tool. lt captures the writes of the agent in its session file. git commands in the lt sandbox read the captured files, so a push includes the changes. `--apply-when-done` writes them to the workspace volume when lt exits. ava passes the key of the backend to lt in `LT_API_KEY`, and lt uses the messages API of the gateway. After the run, ava copies the session file of lt to `runs/<run>/session.lt`; `lt dump-session runs/<run>/session.lt` prints it.
 
 ## The last call
 

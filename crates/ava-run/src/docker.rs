@@ -1161,6 +1161,36 @@ fn collect_entries(run: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+fn collect_session(run: &str, harness: &str) {
+    let Some(path) = crate::registry::session_file(harness) else {
+        return;
+    };
+    let path = std::path::Path::new(path);
+    let (Ok(home_relative_path), Some(file_name)) =
+        (path.strip_prefix(AGENT_HOME), path.file_name())
+    else {
+        log::warn!("{run}: {} is outside {AGENT_HOME}", path.display());
+        return;
+    };
+
+    let source = format!(
+        "{}:{}",
+        holder_container(run),
+        std::path::Path::new(HOME_STAGE)
+            .join(home_relative_path)
+            .display()
+    );
+    let destination = std::path::Path::new(RUN_DIRECTORY)
+        .join(run)
+        .join(file_name);
+    if let Err(error) = process::run_and_assume_success(
+        "docker",
+        &["cp", &source, &destination.display().to_string()],
+    ) {
+        log::warn!("{run}: session file copy error for {harness}: {error}");
+    }
+}
+
 /// Remove the sidecars and the socket volume once the run is over.
 ///
 /// Failures are ignored so that teardown cannot mask the status the agent
@@ -1557,6 +1587,7 @@ pub fn play(launch: &Launch, run: &str) -> std::io::Result<i32> {
         Err(error) if is_refusal_fallback(error) => Ok(()),
         _ => collect_entries(run),
     };
+    collect_session(run, &launch.setup.agent.harness);
     remove_sidecars(run);
 
     let completed = match (&status, &collected, &attempts) {
