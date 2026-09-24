@@ -51,7 +51,7 @@ Everything else the agent could write to is closed off. The root filesystem is r
 
 ## The lt harness
 
-lt doesn't have a public release. `ava image` copies the binary from `agents/lt/lt`, and `.gitignore` excludes that file. Build lt with `cargo build --release` in the lt repository and copy `target/release/lt` to `agents/lt/lt`. lt supports only x86_64. The binary doesn't start in the image if it requires a newer glibc than the base image has.
+lt doesn't have a public release. The binary is in the repository as `agents/lt/lt.tar.xz`, and `ava image` unpacks it to `/usr/local/bin/lt`. To update it, build lt with `cargo build --release` in the lt repository, copy `target/release/lt` to `agents/lt/lt` (`.gitignore` excludes that file) and pack it in `agents/lt`: `tar --owner=0 --group=0 --numeric-owner --mode=755 --mtime=@0 -cf - lt | xz -9e -T0 > lt.tar.xz`. lt supports only x86_64. The binary doesn't start in the image if it requires a newer glibc than the base image has.
 
 lt runs every command of the agent in its own sandbox: a FUSE mount in a user namespace. The sandbox container of an lt run therefore has three extra options:
 

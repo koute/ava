@@ -1,5 +1,5 @@
 FROM ava/base
 
-COPY --chmod=755 lt /usr/local/bin/lt
+ADD lt.tar.xz /usr/local/bin/
 
 ENTRYPOINT ["ava-bridge", "lt"]
